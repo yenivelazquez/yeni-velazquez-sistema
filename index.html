@@ -920,6 +920,9 @@ let DB = null;
    "foto" que antes vivía en localStorage), en la tabla app_data. ---- */
 const SUPABASE_URL = 'https://yzzycpwnjomaxfaytahz.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_C6XQw0jUiiYmkKDrkUR-lQ_Q3ANBwz5';
+// Segunda capa: además de la key pública, hace falta este secreto para que
+// las funciones del lado de Supabase dejen leer o guardar datos.
+const APP_SECRET = 'd79863fc2f9fc04c6316b7dcaab7f805d7766dee3e82fb20';
 const supabaseClient = (window.supabase && SUPABASE_URL && SUPABASE_ANON_KEY)
   ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
   : null;
@@ -944,9 +947,9 @@ async function loadDB(){
   let loaded = null;
   if(supabaseClient){
     try{
-      const { data, error } = await supabaseClient.from('app_data').select('data').eq('id', 1).single();
-      if(!error && data && data.data && Object.keys(data.data).length){
-        loaded = data.data;
+      const { data, error } = await supabaseClient.rpc('get_app_data', { secret: APP_SECRET });
+      if(!error && data && Object.keys(data).length){
+        loaded = data;
       }
     }catch(e){
       console.error('No se pudo conectar con Supabase, uso el respaldo local', e);
@@ -983,7 +986,7 @@ async function saveDB(){
   }
   if(supabaseClient){
     try{
-      const { error } = await supabaseClient.from('app_data').upsert({ id:1, data: DB, updated_at: new Date().toISOString() });
+      const { error } = await supabaseClient.rpc('save_app_data', { secret: APP_SECRET, new_data: DB });
       if(error){
         console.error('Error guardando en Supabase', error);
         showToast('No se pudo guardar en la nube — revisá tu conexión a internet.');
