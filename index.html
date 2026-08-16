@@ -782,6 +782,7 @@
 <div class="orb orb-4"></div>
 <div id="app"></div>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
 /* =========================================================
    ICONS (inline outline SVGs, lucide-style)
@@ -915,6 +916,15 @@ function currentStaff(){
 const DB_KEY = 'yeni-salon-db-v2';
 let DB = null;
 
+/* ---- Supabase: guardamos todo el estado como una única fila (misma
+   "foto" que antes vivía en localStorage), en la tabla app_data. ---- */
+const SUPABASE_URL = 'https://yzzycpwnjomaxfaytahz.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_C6XQw0jUiiYmkKDrkUR-lQ_Q3ANBwz5';
+const supabaseClient = (window.supabase && SUPABASE_URL && SUPABASE_ANON_KEY)
+  ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+  : null;
+
+
 function defaultDB(){
   return {
     clients:{}, staff:{}, referralCodes:{}, diagnoses:{}, appointments:{}, treatmentCatalog:{}, expenses:{}, banners:{}, checklists:{},
@@ -931,13 +941,24 @@ function defaultDB(){
 }
 
 async function loadDB(){
-  try{
-    const raw = localStorage.getItem(DB_KEY);
-    DB = raw ? JSON.parse(raw) : defaultDB();
-  }catch(e){
-    console.error('No se pudo leer localStorage', e);
-    DB = defaultDB();
+  let loaded = null;
+  if(supabaseClient){
+    try{
+      const { data, error } = await supabaseClient.from('app_data').select('data').eq('id', 1).single();
+      if(!error && data && data.data && Object.keys(data.data).length){
+        loaded = data.data;
+      }
+    }catch(e){
+      console.error('No se pudo conectar con Supabase, uso el respaldo local', e);
+    }
   }
+  if(!loaded){
+    try{
+      const raw = localStorage.getItem(DB_KEY);
+      loaded = raw ? JSON.parse(raw) : null;
+    }catch(e){ console.error('No se pudo leer el respaldo local', e); }
+  }
+  DB = loaded || defaultDB();
   if(!DB.clients) DB.clients = {};
   if(!DB.staff) DB.staff = {};
   if(!DB.referralCodes) DB.referralCodes = {};
@@ -958,8 +979,19 @@ async function saveDB(){
   try{
     localStorage.setItem(DB_KEY, JSON.stringify(DB));
   }catch(e){
-    console.error('storage error', e);
-    showToast('No se pudo guardar: el navegador rechazó los datos (¿demasiado pesados?). Probá con imágenes más chicas.');
+    console.error('No se pudo guardar el respaldo local', e);
+  }
+  if(supabaseClient){
+    try{
+      const { error } = await supabaseClient.from('app_data').upsert({ id:1, data: DB, updated_at: new Date().toISOString() });
+      if(error){
+        console.error('Error guardando en Supabase', error);
+        showToast('No se pudo guardar en la nube — revisá tu conexión a internet.');
+      }
+    }catch(e){
+      console.error('Error de red guardando en Supabase', e);
+      showToast('No se pudo guardar en la nube — revisá tu conexión a internet.');
+    }
   }
 }
 
