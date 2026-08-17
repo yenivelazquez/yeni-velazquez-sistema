@@ -296,7 +296,7 @@
   .crc-kebab{ width:32px; height:32px; border-radius:10px; display:flex; align-items:center; justify-content:center; background:transparent; border:none; color:var(--text-secondary); }
   .crc-kebab:hover{ background:var(--bg-secondary); }
   .crc-kebab .icon{ width:18px; height:18px; }
-  .row-menu{ position:absolute; top:calc(100% + 6px); right:0; width:190px; z-index:40; padding:8px; text-align:left; }
+  .row-menu{ position:absolute; top:calc(100% + 6px); right:0; width:190px; z-index:60; padding:8px; text-align:left; }
   .row-menu-item{ display:flex; align-items:center; gap:10px; padding:9px 10px; border-radius:10px; font-size:13.5px; font-weight:500; color:var(--text); }
   .row-menu-item:hover{ background:var(--bg-secondary); }
   .row-menu-item .icon{ width:16px; height:16px; }
@@ -3457,6 +3457,7 @@ function renderClientDrawer(id){
         <h2>${c.name}</h2>
         <span class="badge ${status.cls}">${status.label}</span>
         <div class="dh-phone">${Icon('phone')} ${c.phone}</div>
+        <div class="dh-phone">${Icon('users')} ${c.sucursal || 'Sin sucursal asignada'}</div>
       </div>
     </div>
 
@@ -3496,6 +3497,16 @@ function renderClientDrawer(id){
         <input class="input" id="drawer_birthdate" type="date" value="${c.birthdate||''}">
       </div>
       <button class="btn btn-secondary btn-sm" data-action="saveDrawerBirthdate" data-id="${c.id}">Guardar</button>
+    </div>
+
+    <div style="display:flex; align-items:flex-end; gap:8px; margin-bottom:22px;">
+      <div style="flex:1;">
+        <label class="field-label">${Icon('users')} Sucursal</label>
+        <select class="input" id="drawer_sucursal">
+          ${getBranches().map(br=>`<option ${c.sucursal===br?'selected':''}>${br}</option>`).join('')}
+        </select>
+      </div>
+      <button class="btn btn-secondary btn-sm" data-action="saveDrawerSucursal" data-id="${c.id}">Guardar</button>
     </div>
 
     <button class="btn btn-secondary btn-sm btn-block" style="margin-bottom:20px;" data-action="resetPassword" data-id="${c.id}">${Icon('lock')} Restablecer contraseña</button>
@@ -4961,6 +4972,7 @@ function handleAction(action, el){
   else if(action==='submitGiftBirthday'){ doGiftBirthday(el.getAttribute('data-id')); }
   else if(action==='whatsappBirthday'){ doWhatsappBirthday(el.getAttribute('data-id')); }
   else if(action==='saveDrawerBirthdate'){ doSaveBirthdate(el.getAttribute('data-id')); }
+  else if(action==='saveDrawerSucursal'){ doSaveDrawerSucursal(el.getAttribute('data-id')); }
   else if(action==='bannerPrev'){ setState({bannerIndex: state.bannerIndex - 1}); }
   else if(action==='bannerNext'){ setState({bannerIndex: state.bannerIndex + 1}); }
   else if(action==='bannerGoTo'){ setState({bannerIndex: parseInt(el.getAttribute('data-index'),10)}); }
@@ -5846,6 +5858,16 @@ async function doSaveBirthdate(id){
   await clientRepository.update(id, { birthdate });
   render();
   showToast('Fecha de nacimiento guardada');
+}
+
+async function doSaveDrawerSucursal(id){
+  const c = clientRepository.getById(id);
+  if(!c) return;
+  const sucursal = document.getElementById('drawer_sucursal').value;
+  await clientRepository.update(id, { sucursal });
+  await auditRepository.log('client.edit', {entity:'clients', entityId:id, description:`Sucursal de ${c.name} cambiada a "${sucursal}"`, branch:sucursal});
+  render();
+  showToast('Sucursal actualizada');
 }
 
 async function doToggleChecklistItem(sectionId, idx){
