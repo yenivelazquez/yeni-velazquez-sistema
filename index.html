@@ -889,7 +889,7 @@ const ROLE_PERMISSIONS = {
   ],
   [ROLES.PROFESIONAL]: [
     PERMISSIONS.DASHBOARD_VIEW, PERMISSIONS.CLIENTS_VIEW, PERMISSIONS.DIAGNOSES_VIEW, PERMISSIONS.DIAGNOSES_CREATE,
-    PERMISSIONS.DIAGNOSES_EDIT, PERMISSIONS.TREATMENTS_CREATE, PERMISSIONS.APPOINTMENTS_MANAGE,
+    PERMISSIONS.DIAGNOSES_EDIT, PERMISSIONS.DIAGNOSES_DELETE, PERMISSIONS.TREATMENTS_CREATE, PERMISSIONS.APPOINTMENTS_MANAGE,
   ],
   [ROLES.MARKETING]: [
     PERMISSIONS.DASHBOARD_VIEW, PERMISSIONS.BENEFITS_MANAGE, PERMISSIONS.REFERRALS_VALIDATE,
@@ -904,7 +904,9 @@ function hasPermission(permission){
   const staffMember = DB.staff[session.staffId];
   if(!staffMember || staffMember.status !== 'active') return false;
   const perms = ROLE_PERMISSIONS[staffMember.role] || [];
-  return perms.includes('*') || perms.includes(permission);
+  if(perms.includes('*')) return true;
+  if(Array.isArray(permission)) return permission.some(p => perms.includes(p));
+  return perms.includes(permission);
 }
 function currentStaff(){
   return state.staffSession ? DB.staff[state.staffSession.staffId] : null;
@@ -1867,7 +1869,7 @@ const STAFF_NAV = [
   {id:'checklist', label:'Checklist diario', icon:'check', perm: PERMISSIONS.DASHBOARD_VIEW},
   {id:'equipo', label:'Equipo y accesos', icon:'shield', perm: PERMISSIONS.TEAM_MANAGE},
   {id:'reportes', label:'Reportes', icon:'bar', perm: PERMISSIONS.REPORTS_VIEW},
-  {id:'configuracion', label:'Configuración', icon:'settings', perm: PERMISSIONS.SETTINGS_MANAGE},
+  {id:'configuracion', label:'Configuración', icon:'settings', perm: [PERMISSIONS.SETTINGS_MANAGE, PERMISSIONS.DIAGNOSES_DELETE]},
 ];
 
 const ROLE_LABELS = {OWNER:'Propietaria', ADMIN:'Administradora', RECEPCION:'Recepción', PROFESIONAL:'Profesional', MARKETING:'Marketing'};
@@ -2941,16 +2943,19 @@ function renderStaffEquipo(){
 
 /* ---- Configuración ---- */
 function renderStaffConfiguracion(){
+  const canManageSettings = hasPermission(PERMISSIONS.SETTINGS_MANAGE);
   const canDeleteDiagnoses = hasPermission(PERMISSIONS.DIAGNOSES_DELETE);
 
-  const TABS = [
+  const TABS = canManageSettings ? [
     {id:'general', label:'General', icon:'settings'},
     {id:'banners', label:'Banners', icon:'sparkles'},
     {id:'catalogo', label:'Catálogo', icon:'clipboard'},
     ...(canDeleteDiagnoses ? [{id:'archivados', label:'Archivados', icon:'archive'}] : []),
     {id:'demo', label:'Datos demo', icon:'refresh'},
+  ] : [
+    {id:'archivados', label:'Archivados', icon:'archive'},
   ];
-  if(!TABS.some(t=>t.id===state.configTab)) state.configTab = 'general';
+  if(!TABS.some(t=>t.id===state.configTab)) state.configTab = TABS[0].id;
 
   const tabsHtml = `
   <div class="filter-chips" style="margin-bottom:20px;">
