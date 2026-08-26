@@ -471,6 +471,10 @@
   .diag-card-sub{ font-size:12.5px; color:var(--text-secondary); margin-top:2px; }
   .diag-tag-row{ display:flex; flex-wrap:wrap; gap:6px; margin:8px 0; }
   .diag-tag{ font-size:11.5px; font-weight:600; padding:4px 10px; border-radius:100px; background:var(--bg-secondary); color:var(--text-secondary); }
+  .chip-checkbox-label{ display:inline-flex; align-items:center; gap:6px; padding:8px 14px; border-radius:100px; border:1px solid var(--silver); font-size:13px; font-weight:600; color:var(--text-secondary); cursor:pointer; transition:all 180ms ease; user-select:none; }
+  .chip-checkbox-label input{ display:none; }
+  .chip-checkbox-label:has(input:checked){ background:var(--pink-light); color:var(--pink-dark); border-color:rgba(236,72,153,0.3); }
+  .chip-checkbox-label:hover{ border-color:rgba(236,72,153,0.3); }
   .photo-chip-grid{ display:flex; flex-wrap:wrap; gap:10px; margin-top:10px; }
   .photo-chip{ width:84px; }
   .photo-chip-thumb{ width:84px; height:84px; border-radius:12px; background:var(--bg-secondary); display:flex; align-items:center; justify-content:center; overflow:hidden; border:1px solid var(--silver); }
@@ -876,8 +880,8 @@ const ROLE_PERMISSIONS = {
     PERMISSIONS.DASHBOARD_VIEW, PERMISSIONS.CLIENTS_VIEW, PERMISSIONS.CLIENTS_CREATE, PERMISSIONS.CLIENTS_EDIT, PERMISSIONS.CLIENTS_ARCHIVE,
     PERMISSIONS.DIAGNOSES_VIEW, PERMISSIONS.DIAGNOSES_CREATE, PERMISSIONS.DIAGNOSES_EDIT, PERMISSIONS.DIAGNOSES_DELETE,
     PERMISSIONS.TREATMENTS_CREATE, PERMISSIONS.APPOINTMENTS_MANAGE, PERMISSIONS.BENEFITS_MANAGE, PERMISSIONS.REFERRALS_VALIDATE,
-    PERMISSIONS.REPORTS_VIEW, PERMISSIONS.SETTINGS_MANAGE,
-    // TEAM_MANAGE queda reservado a OWNER: es una acción exclusiva de la propietaria.
+    PERMISSIONS.SETTINGS_MANAGE,
+    // TEAM_MANAGE y REPORTS_VIEW quedan reservados a OWNER: son exclusivos de la propietaria.
   ],
   [ROLES.RECEPCION]: [
     PERMISSIONS.DASHBOARD_VIEW, PERMISSIONS.CLIENTS_VIEW, PERMISSIONS.CLIENTS_CREATE, PERMISSIONS.CLIENTS_EDIT,
@@ -888,7 +892,7 @@ const ROLE_PERMISSIONS = {
     PERMISSIONS.DIAGNOSES_EDIT, PERMISSIONS.TREATMENTS_CREATE, PERMISSIONS.APPOINTMENTS_MANAGE,
   ],
   [ROLES.MARKETING]: [
-    PERMISSIONS.DASHBOARD_VIEW, PERMISSIONS.REPORTS_VIEW, PERMISSIONS.BENEFITS_MANAGE, PERMISSIONS.REFERRALS_VALIDATE,
+    PERMISSIONS.DASHBOARD_VIEW, PERMISSIONS.BENEFITS_MANAGE, PERMISSIONS.REFERRALS_VALIDATE,
   ],
 };
 
@@ -1057,6 +1061,12 @@ const clientRepository = {
   update: async (id, patch) => {
     if(!DB.clients[id]) return null;
     Object.assign(DB.clients[id], patch, { updatedAt: nowIso() });
+    await saveDB();
+    return DB.clients[id];
+  },
+  archive: async (id) => {
+    if(!DB.clients[id]) return null;
+    Object.assign(DB.clients[id], { archived:true, archivedAt: nowIso() });
     await saveDB();
     return DB.clients[id];
   },
@@ -1504,7 +1514,7 @@ function effectiveBranchFilter(){
 }
 function scopedClientList(){
   const scope = effectiveBranchFilter();
-  const all = clientList();
+  const all = clientList().filter(c => !c.archived);
   return scope==='all' ? all : all.filter(c => c.sucursal === scope);
 }
 function benefitIcon(name){
@@ -1611,7 +1621,7 @@ const state = {
   staffSession: null,  // { staffId }
   clientSession: null, // { clientId }
 
-  staffLoginStep: 'login', // login | setPassword
+  staffLoginStep: 'login', // login (pide mail) | password (usuaria existente) | setPassword (primera vez)
   staffLoginPendingId: null,
 
   clientLoginStep: 'phone', // phone | setPassword | enterPassword
@@ -1812,14 +1822,21 @@ function renderAdminLogin(){
       ${state.errors.staff ? `<div style="color:#DC2626; font-size:13px; margin-bottom:10px;">${state.errors.staff}</div>` : ''}
       <button class="btn btn-primary btn-block" data-action="submitStaffSetPassword">Crear contraseña y entrar</button>
     `;
-  } else {
+  } else if(step === 'password'){
     body = `
-      <label class="field-label">Correo electrónico</label>
-      <input class="input" id="staffEmailInput" placeholder="tu@yeniveazquez.com" style="margin-bottom:14px;">
+      <p style="font-size:14.5px; margin:0 0 4px;">Hola${staff?', '+staff.name.split(' ')[0]:''} 👋</p>
+      <p style="color:var(--text-secondary); font-size:13px; margin:0 0 18px;">${staff?staff.email:''} · <span style="color:var(--pink-dark); cursor:pointer;" data-action="backToStaffEmail">No soy yo</span></p>
       <label class="field-label">Contraseña</label>
       <input class="input" type="password" id="staffPasswordInput" placeholder="••••••" style="margin-bottom:14px;">
       ${state.errors.staff ? `<div style="color:#DC2626; font-size:13px; margin-bottom:10px;">${state.errors.staff}</div>` : ''}
       <button class="btn btn-primary btn-block" data-action="submitAdminLogin">Ingresar</button>
+    `;
+  } else {
+    body = `
+      <label class="field-label">Correo electrónico</label>
+      <input class="input" id="staffEmailInput" placeholder="tu@yeniveazquez.com" style="margin-bottom:14px;">
+      ${state.errors.staff ? `<div style="color:#DC2626; font-size:13px; margin-bottom:10px;">${state.errors.staff}</div>` : ''}
+      <button class="btn btn-primary btn-block" data-action="submitStaffEmail">Continuar</button>
     `;
   }
 
@@ -2263,7 +2280,7 @@ function clientRowCard(c){
   const lt = lastTreatment(c);
   const nv = nextVisitDisplay(c);
   const status = clientStatus(c);
-  const isSelected = state.drawerClientId === c.phone;
+  const isSelected = state.drawerClientId === c.id;
   return `
   <div class="client-row-card client-row-grid ${isSelected?'selected':''}" data-action="openClientProfile" data-id="${c.id}">
     <div class="crc-name-col">
@@ -2278,11 +2295,12 @@ function clientRowCard(c){
     <div><span class="badge ${status.cls}">${status.label}</span></div>
     <div class="crc-kebab-wrap">
       <button class="crc-kebab" data-action="toggleRowMenu" data-id="${c.id}">${Icon('menu')}</button>
-      ${state.rowMenuClientId===c.phone ? `
+      ${state.rowMenuClientId===c.id ? `
         <div class="dropdown-scrim" data-action="closeRowMenu"></div>
         <div class="glass row-menu fade-in">
           <div class="row-menu-item" data-action="openClientProfile" data-id="${c.id}">${Icon('users')} Ver ficha completa</div>
           <div class="row-menu-item" data-action="copyCode" data-code="${c.referralCode}">${Icon('copy')} Copiar código</div>
+          ${hasPermission(PERMISSIONS.CLIENTS_ARCHIVE) ? `<div class="row-menu-item" data-action="openModal" data-modal="confirmDeleteClient" data-id="${c.id}" style="color:#DC2626;">${Icon('trash')} Eliminar clienta</div>` : ''}
         </div>` : ''}
     </div>
   </div>`;
@@ -2497,7 +2515,7 @@ function relativeTimeFromNow(isoString){
 }
 function mostFrequentTreatment(diagnoses){
   const count = {};
-  diagnoses.forEach(d => { if(d.recommendedTreatment) count[d.recommendedTreatment] = (count[d.recommendedTreatment]||0)+1; });
+  diagnoses.forEach(d => (d.procesadoReciente||[]).forEach(p => { count[p] = (count[p]||0)+1; }));
   const sorted = Object.entries(count).sort((a,b)=>b[1]-a[1]);
   return sorted.length ? sorted[0][0] : '—';
 }
@@ -2617,7 +2635,7 @@ function renderStaffDiagnosticos(){
       </div>
       <div class="glass metric-sm-card">
         <div class="metric-sm-icon" style="background:#ECFDF5;">${Icon('sparkles')}</div>
-        <div class="metric-sm-label">Tratamiento frecuente</div>
+        <div class="metric-sm-label">Procesado más frecuente</div>
         <div class="metric-sm-value" style="font-size:16px;">${mostFrequentTreatment(herDiag)}</div>
       </div>
       <div class="glass metric-sm-card">
@@ -2644,11 +2662,12 @@ function renderStaffDiagnosticos(){
                 </div>
                 <span class="badge ${d.visibleInPortal?'badge-pink':'badge-gray'}">${d.visibleInPortal? 'Visible en el portal':'Solo uso interno'}</span>
               </div>
-              ${d.professionalEvaluation ? `<p style="font-size:13.5px; margin:10px 0 0;"><strong>Evaluación:</strong> ${d.professionalEvaluation}</p>` : ''}
+              ${d.objetivosCliente ? `<p style="font-size:13.5px; margin:10px 0 0;"><strong>Objetivos:</strong> ${d.objetivosCliente}</p>` : ''}
               <div class="diag-tag-row">
-                ${d.hairType?`<span class="diag-tag">${d.hairType}</span>`:''}
-                ${d.damageLevel?`<span class="diag-tag">Daño: ${d.damageLevel}</span>`:''}
-                ${d.scalpCondition?`<span class="diag-tag">Cuero cabelludo: ${d.scalpCondition}</span>`:''}
+                ${d.forma?`<span class="diag-tag">${d.forma}</span>`:''}
+                ${(d.caracteristicas||[]).map(x=>`<span class="diag-tag">${x}</span>`).join('')}
+                ${d.resistencia?`<span class="diag-tag">Resistencia: ${d.resistencia}</span>`:''}
+                ${d.tipoPielCabelluda?`<span class="diag-tag">Piel: ${d.tipoPielCabelluda}</span>`:''}
                 ${d.status==='archived'?`<span class="diag-tag" style="background:var(--bg-secondary);">Archivado</span>`:''}
               </div>
               ${d.status!=='archived' ? `
@@ -3369,6 +3388,7 @@ function renderModal(){
   else if(m.type==='confirmResetDemo') inner = modalConfirmResetDemo(m);
   else if(m.type==='newTreatmentCatalogItem' || m.type==='editTreatmentCatalogItem') inner = modalTreatmentCatalogForm(m);
   else if(m.type==='confirmDeleteTreatmentCatalogItem') inner = modalConfirmDeleteTreatmentCatalogItem(m);
+  else if(m.type==='confirmDeleteClient') inner = modalConfirmDeleteClient(m);
   else if(m.type==='newExpense') inner = modalNewExpense(m);
   else if(m.type==='newBanner') inner = modalNewBanner(m);
   else if(m.type==='renameBranch') inner = modalRenameBranch(m);
@@ -3546,8 +3566,8 @@ function renderClientDrawer(id){
             <span class="badge ${d.visibleInPortal?'badge-pink':'badge-gray'}">${d.visibleInPortal? 'Portal':'Interno'}</span>
           </div>
           <div class="diag-tag-row">
-            ${d.hairType?`<span class="diag-tag">${d.hairType}</span>`:''}
-            ${d.damageLevel?`<span class="diag-tag">Daño: ${d.damageLevel}</span>`:''}
+            ${d.forma?`<span class="diag-tag">${d.forma}</span>`:''}
+            ${(d.caracteristicas||[]).map(x=>`<span class="diag-tag">${x}</span>`).join('')}
           </div>
           <div style="display:flex; gap:8px; margin-top:8px;">
             <button class="btn btn-secondary btn-sm" data-action="openModal" data-modal="newDiagnosis" data-id="${c.id}" data-diagid="${d.id}">${Icon('edit')} Editar</button>
@@ -3788,67 +3808,78 @@ function modalNewDiagnosis(m){
     state.diagPhotoDrafts = editing.photos.map(p => ({...p, dataUrl: p.dataUrl || photoPreviewCache[p.id] || null, existing:true}));
   }
 
-  const opt = (field, options) => `<select class="input" id="diag_${field}" style="margin-bottom:14px;">${options.map(o=>`<option ${editing&&editing[field]===o?'selected':''}>${o}</option>`).join('')}</select>`;
+  const opt = (field, options) => `<select class="input" id="diag_${field}" style="margin-bottom:14px;"><option value="">Sin especificar</option>${options.map(o=>`<option ${editing&&editing[field]===o?'selected':''}>${o}</option>`).join('')}</select>`;
+  const checkGroup = (field, options) => {
+    const selected = (editing && editing[field]) || [];
+    return `<div style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:14px;">
+      ${options.map(o => `
+        <label class="chip-checkbox-label">
+          <input type="checkbox" name="diag_${field}" value="${o}" ${selected.includes(o)?'checked':''}>
+          ${o}
+        </label>`).join('')}
+    </div>`;
+  };
 
   return `
-  <div class="modal-head"><h2>${editing?'Editar':'Nuevo'} diagnóstico</h2><button class="close-btn" data-action="closeModal">${Icon('x')}</button></div>
+  <div class="modal-head"><h2>${editing?'Editar':'Nueva'} evaluación capilar</h2><button class="close-btn" data-action="closeModal">${Icon('x')}</button></div>
   <p style="color:var(--text-secondary); font-size:13px; margin:-10px 0 16px;">${c.name}</p>
 
   <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:14px;">
     <div><label class="field-label">Fecha</label><input class="input" id="diag_date" type="date" value="${editing?editing.date:today}"></div>
-    <div><label class="field-label">Profesional</label><input class="input" id="diag_professional" value="${editing?(editing.professional||''):(staff?staff.name:'')}"></div>
+    <div><label class="field-label">Completado por</label><input class="input" id="diag_professional" value="${editing?(editing.professional||''):(staff?staff.name:'')}"></div>
   </div>
   <label class="field-label">Sucursal</label>
-  <select class="input" id="diag_sucursal" style="margin-bottom:14px;">
+  <select class="input" id="diag_sucursal" style="margin-bottom:18px;">
     ${getBranches().map(br=>`<option ${(editing?editing.sucursal:c.sucursal)===br?'selected':''}>${br}</option>`).join('')}
   </select>
 
-  <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
-    <div><label class="field-label">Tipo de cabello</label>${opt('hairType',['Liso','Ondulado','Rizado','Afro'])}</div>
-    <div><label class="field-label">Textura</label>${opt('texture',['Fina','Media','Gruesa'])}</div>
-  </div>
-  <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
-    <div><label class="field-label">Grosor (densidad)</label>${opt('thickness',['Baja','Media','Alta'])}</div>
-    <div><label class="field-label">Porosidad</label>${opt('porosity',['Baja','Media','Alta'])}</div>
-  </div>
-  <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
-    <div><label class="field-label">Elasticidad</label>${opt('elasticity',['Baja','Media','Alta'])}</div>
-    <div><label class="field-label">Nivel de daño</label>${opt('damageLevel',['Leve','Moderado','Severo'])}</div>
-  </div>
-  <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
-    <div><label class="field-label">Estado del cuero cabelludo</label>${opt('scalpCondition',['Normal','Graso','Seco','Sensible','Con caspa'])}</div>
-    <div><label class="field-label">Procesos químicos previos</label>${opt('previousChemical',['Ninguno','Coloración','Alisado','Decoloración','Permanente'])}</div>
-  </div>
-  <label class="field-label">Frecuencia de planchita o calor</label>
-  ${opt('heatFrequency',['Nunca','Ocasional','Frecuente','Diario'])}
+  <label class="field-label">Forma</label>
+  ${opt('forma', ['Liso','Ondulado','Rulos','Multiestructura'])}
 
-  <label class="field-label">Productos que usa habitualmente</label>
-  <input class="input" id="diag_usualProducts" value="${editing?(editing.usualProducts||''):''}" style="margin-bottom:14px;">
-  <label class="field-label">Objetivo de la clienta</label>
-  <input class="input" id="diag_clientGoal" value="${editing?(editing.clientGoal||''):''}" style="margin-bottom:14px;">
-  <label class="field-label">Evaluación profesional</label>
-  <textarea class="input" id="diag_professionalEvaluation" rows="2" style="margin-bottom:14px; resize:vertical;">${editing?(editing.professionalEvaluation||''):''}</textarea>
-  <label class="field-label">Tratamiento recomendado</label>
-  <input class="input" id="diag_recommendedTreatment" value="${editing?(editing.recommendedTreatment||''):''}" style="margin-bottom:14px;">
+  <label class="field-label">Características</label>
+  ${checkGroup('caracteristicas', ['Normal','Seco','Deshidratado','Quebradizo','Dañado','Ultraprocesado'])}
 
-  <label class="field-label">Recomendaciones para la clienta</label>
-  <textarea class="input" id="diag_recommendations" rows="2" style="margin-bottom:14px; resize:vertical;" placeholder="Se muestra en el portal solo si activás la visibilidad de abajo">${editing?(editing.recommendations||''):''}</textarea>
-  <label class="field-label">Observaciones internas (nunca visibles para la clienta)</label>
-  <textarea class="input" id="diag_internalNotes" rows="2" style="margin-bottom:14px; resize:vertical;">${editing?(editing.internalNotes||''):''}</textarea>
+  <label class="field-label">Otros</label>
+  ${checkGroup('otros', ['Caspa','Caída'])}
+
+  <label class="field-label">Resistencia</label>
+  ${opt('resistencia', ['Alta','Media','Baja'])}
+
+  <label class="field-label">Procesado reciente</label>
+  ${checkGroup('procesadoReciente', ['Alisado','Decoloración','Permanente','Color'])}
+  <label class="field-label">Procesado reciente — otro (opcional)</label>
+  <input class="input" id="diag_procesadoRecienteOtro" value="${editing?(editing.procesadoRecienteOtro||''):''}" style="margin-bottom:14px;">
+
+  <label class="field-label">Hábitos</label>
+  ${checkGroup('habitos', ['Secador','Planchita','Dormir con pelo mojado'])}
+
+  <label class="field-label">Enfermedad</label>
+  ${checkGroup('enfermedad', ['Tiroides','Rosácea'])}
+  <label class="field-label">Enfermedad — otro (opcional)</label>
+  <input class="input" id="diag_enfermedadOtro" value="${editing?(editing.enfermedadOtro||''):''}" style="margin-bottom:14px;">
+
+  <label class="field-label">Tipo de piel cabelluda</label>
+  ${opt('tipoPielCabelluda', ['Normal','Graso','Mixta'])}
+
+  <label class="field-label">Objetivos del cliente</label>
+  <textarea class="input" id="diag_objetivosCliente" rows="2" style="margin-bottom:14px; resize:vertical;">${editing?(editing.objetivosCliente||''):''}</textarea>
+
+  <label class="field-label">Qué podemos lograr</label>
+  <textarea class="input" id="diag_quePodemosLograr" rows="2" style="margin-bottom:14px; resize:vertical;">${editing?(editing.quePodemosLograr||''):''}</textarea>
 
   <label style="display:flex; align-items:center; gap:8px; margin:6px 0 16px; font-size:13.5px; font-weight:500; cursor:pointer;">
     <input type="checkbox" id="diag_visibleInPortal" ${editing&&editing.visibleInPortal?'checked':''} style="width:16px; height:16px; accent-color:var(--pink);">
-    Mostrar este diagnóstico en el Portal de Clientas
+    Mostrar esta evaluación en el Portal de Clientas
   </label>
 
   <label class="field-label">Fotografías</label>
-  <p style="color:var(--text-secondary); font-size:11.5px; margin:-4px 0 8px;">Simulado: la miniatura solo dura mientras esta pestaña sigue abierta (todavía no hay Supabase Storage).</p>
+  <p style="color:var(--text-secondary); font-size:11.5px; margin:-4px 0 8px;">Se comprimen y quedan guardadas — usá la descripción para marcar cuál es "Antes" (y "Después" en una próxima visita).</p>
   <div class="photo-chip-grid" style="margin-bottom:6px;">
     ${state.diagPhotoDrafts.map(p => `
       <div class="photo-chip">
         <div class="photo-chip-thumb">${p.dataUrl ? `<img src="${p.dataUrl}">` : Icon('archive')}</div>
         <div class="photo-chip-name">${p.filename}</div>
-        <input id="diag_photo_desc_${p.id}" class="input" placeholder="Descripción" value="${p.description||''}" style="font-size:10.5px; padding:5px 6px; margin-top:4px;">
+        <input id="diag_photo_desc_${p.id}" class="input" placeholder="Ej: Antes" value="${p.description||''}" style="font-size:10.5px; padding:5px 6px; margin-top:4px;">
         <select id="diag_photo_vis_${p.id}" class="input" style="font-size:10.5px; padding:5px 6px; margin-top:4px;">
           <option value="internal" ${p.visibility!=='client'?'selected':''}>Solo interno</option>
           <option value="client" ${p.visibility==='client'?'selected':''}>Ver clienta</option>
@@ -3861,7 +3892,7 @@ function modalNewDiagnosis(m){
   <input type="file" id="diag_photo_input" accept="image/*" multiple style="display:none">
 
   ${state.errors.newDiagnosis ? `<div style="color:#DC2626; font-size:13px; margin:10px 0 0;">${state.errors.newDiagnosis}</div>`:''}
-  <button class="btn btn-primary btn-block" style="margin-top:14px;" data-action="submitDiagnosis" data-id="${c.id}" data-diagid="${editing?editing.id:''}">${editing?'Guardar cambios':'Guardar diagnóstico'}</button>
+  <button class="btn btn-primary btn-block" style="margin-top:14px;" data-action="submitDiagnosis" data-id="${c.id}" data-diagid="${editing?editing.id:''}">${editing?'Guardar cambios':'Guardar evaluación'}</button>
   `;
 }
 
@@ -3971,29 +4002,27 @@ function modalViewDiagnosis(m){
   if(!d) return `<p>Diagnóstico no encontrado.</p>`;
   const c = clientRepository.getById(d.clientId);
   const field = (label, value) => value ? `<div class="list-row"><span style="color:var(--text-secondary);">${label}</span><strong>${value}</strong></div>` : '';
+  const fieldList = (label, arr) => (arr && arr.length) ? `<div class="list-row"><span style="color:var(--text-secondary);">${label}</span><strong>${arr.join(', ')}</strong></div>` : '';
 
   return `
-  <div class="modal-head"><h2>Diagnóstico — ${fmtDate(d.date)}</h2><button class="close-btn" data-action="closeModal">${Icon('x')}</button></div>
-  <p style="color:var(--text-secondary); font-size:13px; margin:-10px 0 16px;">${c?c.name:'Clienta eliminada'} · ${d.professional||'Sin profesional'} · ${d.sucursal||'—'}</p>
+  <div class="modal-head"><h2>Evaluación capilar — ${fmtDate(d.date)}</h2><button class="close-btn" data-action="closeModal">${Icon('x')}</button></div>
+  <p style="color:var(--text-secondary); font-size:13px; margin:-10px 0 16px;">${c?c.name:'Clienta eliminada'} · Completado por ${d.professional||'—'} · ${d.sucursal||'—'}</p>
 
   <div class="card" style="padding:16px; margin-bottom:16px;">
-    ${field('Tipo de cabello', d.hairType)}
-    ${field('Textura', d.texture)}
-    ${field('Grosor', d.thickness)}
-    ${field('Porosidad', d.porosity)}
-    ${field('Elasticidad', d.elasticity)}
-    ${field('Nivel de daño', d.damageLevel)}
-    ${field('Cuero cabelludo', d.scalpCondition)}
-    ${field('Procesos químicos previos', d.previousChemical)}
-    ${field('Frecuencia de calor', d.heatFrequency)}
-    ${field('Productos habituales', d.usualProducts)}
-    ${field('Objetivo de la clienta', d.clientGoal)}
+    ${field('Forma', d.forma)}
+    ${fieldList('Características', d.caracteristicas)}
+    ${fieldList('Otros', d.otros)}
+    ${field('Resistencia', d.resistencia)}
+    ${fieldList('Procesado reciente', d.procesadoReciente)}
+    ${field('Procesado reciente — otro', d.procesadoRecienteOtro)}
+    ${fieldList('Hábitos', d.habitos)}
+    ${fieldList('Enfermedad', d.enfermedad)}
+    ${field('Enfermedad — otro', d.enfermedadOtro)}
+    ${field('Tipo de piel cabelluda', d.tipoPielCabelluda)}
   </div>
 
-  ${d.professionalEvaluation ? `<div class="modal-subtitle">Evaluación profesional</div><p style="font-size:13.5px; margin:0 0 16px;">${d.professionalEvaluation}</p>` : ''}
-  ${d.recommendedTreatment ? `<div class="modal-subtitle">Tratamiento recomendado</div><p style="font-size:13.5px; margin:0 0 16px;">${d.recommendedTreatment}</p>` : ''}
-  ${d.recommendations ? `<div class="modal-subtitle">Recomendaciones para la clienta</div><p style="font-size:13.5px; margin:0 0 16px;">${d.recommendations}</p>` : ''}
-  ${d.internalNotes ? `<div class="modal-subtitle">Observaciones internas <span class="badge badge-gray" style="margin-left:6px;">Solo staff</span></div><p style="font-size:13.5px; margin:0 0 16px;">${d.internalNotes}</p>` : ''}
+  ${d.objetivosCliente ? `<div class="modal-subtitle">Objetivos del cliente</div><p style="font-size:13.5px; margin:0 0 16px;">${d.objetivosCliente}</p>` : ''}
+  ${d.quePodemosLograr ? `<div class="modal-subtitle">Qué podemos lograr</div><p style="font-size:13.5px; margin:0 0 16px;">${d.quePodemosLograr}</p>` : ''}
 
   <div class="modal-subtitle">Fotografías</div>
   ${(d.photos||[]).length ? `
@@ -4185,6 +4214,19 @@ function modalNewExpense(){
   `}
   ${state.errors.expense ? `<div style="color:#DC2626; font-size:13px; margin:8px 0;">${state.errors.expense}</div>`:''}
   <button class="btn btn-primary btn-block" style="margin-top:14px;" data-action="submitExpense">Guardar gasto</button>
+  `;
+}
+
+function modalConfirmDeleteClient(m){
+  const c = clientRepository.getById(m.payload.id);
+  if(!c) return `<p>Clienta no encontrada.</p>`;
+  return `
+  <div class="modal-head"><h2>¿Eliminar a ${c.name}?</h2><button class="close-btn" data-action="closeModal">${Icon('x')}</button></div>
+  <p style="color:var(--text-secondary); font-size:14px; margin:0 0 20px;">Deja de aparecer en el listado de Clientas. Su historial (tratamientos, diagnósticos, turnos, beneficios) no se borra — queda guardado, por si necesitás recuperarla más adelante.</p>
+  <div style="display:flex; gap:10px;">
+    <button class="btn btn-secondary btn-block" data-action="closeModal">Cancelar</button>
+    <button class="btn btn-primary btn-block" style="background:#DC2626;" data-action="confirmDeleteClientAction" data-id="${c.id}">Sí, eliminar</button>
+  </div>
   `;
 }
 
@@ -4650,11 +4692,12 @@ function clientDiagnosisCardHTML(d){
       <div class="diag-card-title">${fmtDate(d.date)}</div>
     </div>
     <div class="diag-tag-row">
-      ${d.hairType?`<span class="diag-tag">${d.hairType}</span>`:''}
-      ${d.damageLevel?`<span class="diag-tag">Nivel de daño: ${d.damageLevel}</span>`:''}
+      ${d.forma?`<span class="diag-tag">${d.forma}</span>`:''}
+      ${(d.caracteristicas||[]).map(x=>`<span class="diag-tag">${x}</span>`).join('')}
+      ${d.tipoPielCabelluda?`<span class="diag-tag">Piel: ${d.tipoPielCabelluda}</span>`:''}
     </div>
-    ${d.recommendations ? `<p style="font-size:13.5px; margin:10px 0 0;">${d.recommendations}</p>` : ''}
-    ${d.recommendedTreatment ? `<p style="font-size:12.5px; color:var(--text-secondary); margin:8px 0 0;">Tratamiento recomendado: ${d.recommendedTreatment}</p>` : ''}
+    ${d.objetivosCliente ? `<p style="font-size:13.5px; margin:10px 0 0;"><strong>Objetivos:</strong> ${d.objetivosCliente}</p>` : ''}
+    ${d.quePodemosLograr ? `<p style="font-size:12.5px; color:var(--text-secondary); margin:8px 0 0;">Qué podemos lograr: ${d.quePodemosLograr}</p>` : ''}
     ${clientPhotos.length ? `
       <div class="photo-chip-grid" style="margin-top:12px;">
         ${clientPhotos.map(p=>`
@@ -4827,10 +4870,21 @@ function attachGlobalHandlers(){
 }
 
 function handleAction(action, el){
-  if(action==='submitAdminLogin'){
+  if(action==='submitStaffEmail'){
     const email = document.getElementById('staffEmailInput').value.trim();
+    const staff = staffRepository.getByEmail(email);
+    if(!staff){ state.errors.staff = 'No encontramos una cuenta con ese correo.'; render(); return; }
+    if(staff.status === 'suspended'){ state.errors.staff = 'Esta cuenta está suspendida. Hablá con la propietaria del salón.'; render(); return; }
+    if(staff.status === 'inactive'){ state.errors.staff = 'Esta cuenta no está habilitada.'; render(); return; }
+    state.errors = {};
+    setState({ staffLoginStep: staff.passwordSet ? 'password' : 'setPassword', staffLoginPendingId: staff.id });
+  }
+  else if(action==='backToStaffEmail'){ setState({staffLoginStep:'login', staffLoginPendingId:null}); }
+  else if(action==='submitAdminLogin'){
+    const staff = state.staffLoginPendingId ? staffRepository.getById(state.staffLoginPendingId) : null;
     const password = document.getElementById('staffPasswordInput').value;
-    authService.signInStaff(email, password).then(res => {
+    if(!staff){ state.errors.staff = 'Algo salió mal, volvé a escribir tu correo.'; setState({staffLoginStep:'login'}); return; }
+    authService.signInStaff(staff.email, password).then(res => {
       if(res.error){ state.errors.staff = res.error; render(); return; }
       if(res.needsPasswordSetup){
         state.errors = {};
@@ -4839,7 +4893,7 @@ function handleAction(action, el){
       }
       state.errors = {};
       state.routeMessage = null;
-      setState({staffSession:{staffId: res.staffId}, staffView:'dashboard'});
+      setState({staffSession:{staffId: res.staffId}, staffLoginStep:'login', staffLoginPendingId:null, staffView:'dashboard'});
     });
   }
   else if(action==='submitStaffSetPassword'){
@@ -4959,6 +5013,7 @@ function handleAction(action, el){
   else if(action==='confirmResetDemo'){ doResetDemoData(); }
   else if(action==='submitTreatmentCatalogItem'){ doSaveTreatmentCatalogItem(el.getAttribute('data-id')||null); }
   else if(action==='confirmDeleteTreatmentCatalogItem'){ doDeleteTreatmentCatalogItem(el.getAttribute('data-id')); }
+  else if(action==='confirmDeleteClientAction'){ doDeleteClient(el.getAttribute('data-id')); }
   else if(action==='setReportesTab'){ setState({reportesTab: el.getAttribute('data-tab')}); }
   else if(action==='reportesShiftMonth'){ setState({reportesMonth: shiftMonth(state.reportesMonth, parseInt(el.getAttribute('data-delta'),10))}); }
   else if(action==='submitExpense'){ doSaveExpense(); }
@@ -5449,6 +5504,7 @@ async function doSaveDiagnosis(clientId, diagId){
   const c = clientRepository.getById(clientId);
   if(!c) return;
   const g = (id) => { const el = document.getElementById(id); return el ? el.value.trim() : ''; };
+  const gChecked = (name) => Array.from(document.querySelectorAll(`input[name="diag_${name}"]:checked`)).map(el=>el.value);
 
   const photos = state.diagPhotoDrafts.map(p => ({
     id: p.id, filename: p.filename,
@@ -5459,12 +5515,18 @@ async function doSaveDiagnosis(clientId, diagId){
 
   const data = {
     clientId, date: g('diag_date'), professional: g('diag_professional'), sucursal: g('diag_sucursal'),
-    hairType: g('diag_hairType'), texture: g('diag_texture'), thickness: g('diag_thickness'),
-    porosity: g('diag_porosity'), elasticity: g('diag_elasticity'), damageLevel: g('diag_damageLevel'),
-    scalpCondition: g('diag_scalpCondition'), previousChemical: g('diag_previousChemical'), heatFrequency: g('diag_heatFrequency'),
-    usualProducts: g('diag_usualProducts'), clientGoal: g('diag_clientGoal'),
-    professionalEvaluation: g('diag_professionalEvaluation'), recommendedTreatment: g('diag_recommendedTreatment'),
-    recommendations: g('diag_recommendations'), internalNotes: g('diag_internalNotes'),
+    forma: g('diag_forma'),
+    caracteristicas: gChecked('caracteristicas'),
+    otros: gChecked('otros'),
+    resistencia: g('diag_resistencia'),
+    procesadoReciente: gChecked('procesadoReciente'),
+    procesadoRecienteOtro: g('diag_procesadoRecienteOtro'),
+    habitos: gChecked('habitos'),
+    enfermedad: gChecked('enfermedad'),
+    enfermedadOtro: g('diag_enfermedadOtro'),
+    tipoPielCabelluda: g('diag_tipoPielCabelluda'),
+    objetivosCliente: g('diag_objetivosCliente'),
+    quePodemosLograr: g('diag_quePodemosLograr'),
     visibleInPortal: document.getElementById('diag_visibleInPortal').checked,
     photos,
   };
@@ -5682,6 +5744,18 @@ async function doSaveTreatmentCatalogItem(id){
   state.errors.treatmentCatalog = null;
   state.modal = null;
   render();
+}
+
+async function doDeleteClient(id){
+  if(!hasPermission(PERMISSIONS.CLIENTS_ARCHIVE)) return;
+  const c = clientRepository.getById(id);
+  if(!c) return;
+  await clientRepository.archive(id);
+  await auditRepository.log('client.delete', {entity:'clients', entityId:id, description:`Clienta "${c.name}" eliminada`, branch:c.sucursal});
+  state.modal = null;
+  state.rowMenuClientId = null;
+  render();
+  showToast(`"${c.name}" eliminada`);
 }
 
 async function doDeleteTreatmentCatalogItem(id){
