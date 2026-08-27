@@ -506,6 +506,12 @@
   .appt-meta{ font-size:13px; color:var(--text-secondary); margin-top:3px; }
   .appt-createdby{ font-size:12px; color:var(--text-secondary); opacity:0.8; margin-top:5px; }
   .appt-actions{ display:flex; align-items:center; gap:8px; flex-shrink:0; flex-wrap:wrap; justify-content:flex-end; }
+  @media (max-width:640px){
+    .appt-row{ flex-wrap:wrap; gap:12px; padding:18px; }
+    .appt-time{ width:auto; text-align:left; order:1; }
+    .appt-body{ flex:1 1 100%; order:2; min-width:0; }
+    .appt-actions{ flex:1 1 100%; order:3; justify-content:flex-start; }
+  }
   .appt-chip-pending{ background:var(--pink-light); color:var(--pink-dark); font-size:13px; font-weight:700; padding:9px 16px; border-radius:100px; }
   .appt-chip-btn{ background:var(--bg-secondary); color:var(--text); font-size:13px; font-weight:600; padding:9px 16px; border-radius:100px; border:none; display:inline-flex; align-items:center; gap:6px; transition:all 180ms ease; }
   .appt-chip-btn:hover{ background:var(--silver); }
