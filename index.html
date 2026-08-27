@@ -920,6 +920,43 @@ function currentStaff(){
    pasa siempre por los repositorios de más abajo.
    ========================================================= */
 const DB_KEY = 'yeni-salon-db-v2';
+
+/* ---- Sesión persistida en este dispositivo (no se mezcla con la base de
+   datos) — así no hace falta loguearse de nuevo cada vez que se cierra la
+   pestaña o el navegador, en el mismo dispositivo. */
+const SESSION_KEY = 'yeni-session-v1';
+function persistSession(type, id){
+  try{ localStorage.setItem(SESSION_KEY, JSON.stringify({type, id})); }catch(e){ console.error('No se pudo guardar la sesión', e); }
+}
+function clearPersistedSession(){
+  try{ localStorage.removeItem(SESSION_KEY); }catch(e){ console.error('No se pudo borrar la sesión', e); }
+}
+function restorePersistedSession(){
+  let raw;
+  try{ raw = localStorage.getItem(SESSION_KEY); }catch(e){ return; }
+  if(!raw) return;
+  let parsed;
+  try{ parsed = JSON.parse(raw); }catch(e){ clearPersistedSession(); return; }
+  const { type, id } = parsed || {};
+  if(type === 'staff'){
+    const staff = staffRepository.getById(id);
+    if(staff && staff.status === 'active'){
+      state.staffSession = { staffId: id };
+      if(!window.location.hash) window.location.hash = '#/admin';
+    } else {
+      clearPersistedSession();
+    }
+  } else if(type === 'client'){
+    const c = clientRepository.getById(id);
+    if(c && !c.archived){
+      state.clientSession = { clientId: id };
+      if(!window.location.hash) window.location.hash = '#/portal';
+    } else {
+      clearPersistedSession();
+    }
+  }
+}
+
 let DB = null;
 
 /* ---- Supabase: guardamos todo el estado como una única fila (misma
@@ -1720,6 +1757,7 @@ function render(){
     const staff = state.staffSession ? DB.staff[state.staffSession.staffId] : null;
     if(!staff || staff.status !== 'active'){
       state.staffSession = null;
+      clearPersistedSession();
       html = renderAdminLogin();
     } else {
       html = renderStaffApp();
@@ -4547,7 +4585,7 @@ function timelineHTML(treatments, limit){
    ========================================================= */
 function renderClientApp(){
   const c = clientRepository.getById(state.clientSession.clientId);
-  if(!c){ setState({clientSession:null}); return ''; }
+  if(!c){ clearPersistedSession(); setState({clientSession:null}); return ''; }
   return `
   <div class="client-shell ${screenAnim()}">
     ${renderClientDesktop(c)}
@@ -4902,6 +4940,7 @@ function handleAction(action, el){
       }
       state.errors = {};
       state.routeMessage = null;
+      persistSession('staff', res.staffId);
       setState({staffSession:{staffId: res.staffId}, staffLoginStep:'login', staffLoginPendingId:null, staffView:'dashboard'});
     });
   }
@@ -4912,6 +4951,7 @@ function handleAction(action, el){
     if(p1 !== p2){ state.errors.staff = 'Las contraseñas no coinciden.'; render(); return; }
     authService.completeStaffPasswordSetup(state.staffLoginPendingId, p1).then(res => {
       state.errors = {};
+      persistSession('staff', res.staffId);
       setState({staffSession:{staffId: res.staffId}, staffLoginStep:'login', staffLoginPendingId:null, staffView:'dashboard'});
     });
   }
@@ -4932,6 +4972,7 @@ function handleAction(action, el){
     if(p1 !== p2){ state.errors.client = 'Las contraseñas no coinciden.'; render(); return; }
     authService.completeClientPasswordSetup(state.clientLoginPendingId, p1).then(res => {
       state.errors = {};
+      persistSession('client', res.clientId);
       setState({clientSession:{clientId: res.clientId}, clientLoginStep:'phone', clientLoginPendingId:null, clientView:'inicio'});
     });
   }
@@ -4940,6 +4981,7 @@ function handleAction(action, el){
     const c = clientRepository.getById(state.clientLoginPendingId);
     if(c && c.password === p){
       state.errors={};
+      persistSession('client', c.id);
       setState({clientSession:{clientId:c.id}, clientLoginStep:'phone', clientLoginPendingId:null, clientView:'inicio'});
     }
     else{ state.errors.client = 'Contraseña incorrecta.'; render(); }
@@ -4951,9 +4993,10 @@ function handleAction(action, el){
   else if(action==='staffLogout'){
     auditRepository.log('staff.logout', {description:'Cierre de sesión'});
     state.staffSession = null;
+    clearPersistedSession();
     setState({staffLoginStep:'login', staffLoginPendingId:null});
   }
-  else if(action==='clientLogout'){ setState({clientSession:null, clientLoginStep:'phone', clientLoginPendingId:null}); }
+  else if(action==='clientLogout'){ clearPersistedSession(); setState({clientSession:null, clientLoginStep:'phone', clientLoginPendingId:null}); }
   else if(action==='openModal'){
     const id = el.getAttribute('data-id');
     const diagid = el.getAttribute('data-diagid');
@@ -6101,6 +6144,7 @@ setInterval(() => {
   document.getElementById('app').innerHTML = `<div class="center-screen"><p style="color:var(--text-secondary);">Cargando…</p></div>`;
   await loadDB();
   await checkOverdueAppointments();
+  restorePersistedSession();
   if(!window.location.hash) window.location.hash = '#/portal';
   render();
 })();
