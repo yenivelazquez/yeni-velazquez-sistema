@@ -1667,6 +1667,7 @@ const state = {
   turnosClientSearch: '',
   checklistDate: new Date().toISOString().slice(0,10),
   checklistTeamDate: new Date().toISOString().slice(0,10),
+  diagFormDraft: null,
 };
 
 function setState(patch){ Object.assign(state, patch); render(); }
@@ -3808,14 +3809,17 @@ function modalNewDiagnosis(m){
   const editing = diagId ? diagnosisRepository.getById(diagId) : null;
   const staff = currentStaff();
   const today = new Date().toISOString().slice(0,10);
+  // Si ya hay un borrador guardado (por haber subido/sacado una foto en el medio),
+  // lo usamos como fuente de cada campo — así no se pierde lo que ya se completó.
+  const src = state.diagFormDraft || editing || {};
 
   if(editing && state.diagPhotoDrafts.length===0 && editing.photos && editing.photos.length){
     state.diagPhotoDrafts = editing.photos.map(p => ({...p, dataUrl: p.dataUrl || photoPreviewCache[p.id] || null, existing:true}));
   }
 
-  const opt = (field, options) => `<select class="input" id="diag_${field}" style="margin-bottom:14px;"><option value="">Sin especificar</option>${options.map(o=>`<option ${editing&&editing[field]===o?'selected':''}>${o}</option>`).join('')}</select>`;
+  const opt = (field, options) => `<select class="input" id="diag_${field}" style="margin-bottom:14px;"><option value="">Sin especificar</option>${options.map(o=>`<option ${src[field]===o?'selected':''}>${o}</option>`).join('')}</select>`;
   const checkGroup = (field, options) => {
-    const selected = (editing && editing[field]) || [];
+    const selected = src[field] || [];
     return `<div style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:14px;">
       ${options.map(o => `
         <label class="chip-checkbox-label">
@@ -3830,12 +3834,12 @@ function modalNewDiagnosis(m){
   <p style="color:var(--text-secondary); font-size:13px; margin:-10px 0 16px;">${c.name}</p>
 
   <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:14px;">
-    <div><label class="field-label">Fecha</label><input class="input" id="diag_date" type="date" value="${editing?editing.date:today}"></div>
-    <div><label class="field-label">Completado por</label><input class="input" id="diag_professional" value="${editing?(editing.professional||''):(staff?staff.name:'')}"></div>
+    <div><label class="field-label">Fecha</label><input class="input" id="diag_date" type="date" value="${src.date||today}"></div>
+    <div><label class="field-label">Completado por</label><input class="input" id="diag_professional" value="${src.professional!=null?src.professional:(staff?staff.name:'')}"></div>
   </div>
   <label class="field-label">Sucursal</label>
   <select class="input" id="diag_sucursal" style="margin-bottom:18px;">
-    ${getBranches().map(br=>`<option ${(editing?editing.sucursal:c.sucursal)===br?'selected':''}>${br}</option>`).join('')}
+    ${getBranches().map(br=>`<option ${(src.sucursal||c.sucursal)===br?'selected':''}>${br}</option>`).join('')}
   </select>
 
   <label class="field-label">Forma</label>
@@ -3853,7 +3857,7 @@ function modalNewDiagnosis(m){
   <label class="field-label">Procesado reciente</label>
   ${checkGroup('procesadoReciente', ['Alisado','Decoloración','Permanente','Color'])}
   <label class="field-label">Procesado reciente — otro (opcional)</label>
-  <input class="input" id="diag_procesadoRecienteOtro" value="${editing?(editing.procesadoRecienteOtro||''):''}" style="margin-bottom:14px;">
+  <input class="input" id="diag_procesadoRecienteOtro" value="${src.procesadoRecienteOtro||''}" style="margin-bottom:14px;">
 
   <label class="field-label">Hábitos</label>
   ${checkGroup('habitos', ['Secador','Planchita','Dormir con pelo mojado'])}
@@ -3861,19 +3865,19 @@ function modalNewDiagnosis(m){
   <label class="field-label">Enfermedad</label>
   ${checkGroup('enfermedad', ['Tiroides','Rosácea'])}
   <label class="field-label">Enfermedad — otro (opcional)</label>
-  <input class="input" id="diag_enfermedadOtro" value="${editing?(editing.enfermedadOtro||''):''}" style="margin-bottom:14px;">
+  <input class="input" id="diag_enfermedadOtro" value="${src.enfermedadOtro||''}" style="margin-bottom:14px;">
 
   <label class="field-label">Tipo de piel cabelluda</label>
   ${opt('tipoPielCabelluda', ['Normal','Graso','Mixta'])}
 
   <label class="field-label">Objetivos del cliente</label>
-  <textarea class="input" id="diag_objetivosCliente" rows="2" style="margin-bottom:14px; resize:vertical;">${editing?(editing.objetivosCliente||''):''}</textarea>
+  <textarea class="input" id="diag_objetivosCliente" rows="2" style="margin-bottom:14px; resize:vertical;">${src.objetivosCliente||''}</textarea>
 
   <label class="field-label">Qué podemos lograr</label>
-  <textarea class="input" id="diag_quePodemosLograr" rows="2" style="margin-bottom:14px; resize:vertical;">${editing?(editing.quePodemosLograr||''):''}</textarea>
+  <textarea class="input" id="diag_quePodemosLograr" rows="2" style="margin-bottom:14px; resize:vertical;">${src.quePodemosLograr||''}</textarea>
 
   <label style="display:flex; align-items:center; gap:8px; margin:6px 0 16px; font-size:13.5px; font-weight:500; cursor:pointer;">
-    <input type="checkbox" id="diag_visibleInPortal" ${editing&&editing.visibleInPortal?'checked':''} style="width:16px; height:16px; accent-color:var(--pink);">
+    <input type="checkbox" id="diag_visibleInPortal" ${src.visibleInPortal?'checked':''} style="width:16px; height:16px; accent-color:var(--pink);">
     Mostrar esta evaluación en el Portal de Clientas
   </label>
 
@@ -4959,6 +4963,7 @@ function handleAction(action, el){
     const modalType = el.getAttribute('data-modal');
     state.errors={};
     state.diagPhotoDrafts = [];
+    state.diagFormDraft = null;
     state.apClientSearch = '';
     state.bannerImageDraft = null;
     if(modalType==='editAppointment' && id){
@@ -4994,7 +4999,7 @@ function handleAction(action, el){
   }
   else if(action==='submitScheduleVisit'){ doScheduleVisit(el.getAttribute('data-id')); }
   else if(action==='resetPassword'){ doResetPassword(el.getAttribute('data-id')); }
-  else if(action==='closeModal'){ setState({modal:null}); }
+  else if(action==='closeModal'){ state.diagFormDraft = null; setState({modal:null}); }
   else if(action==='closeModalBg'){ setState({modal:null}); }
   else if(action==='submitCreateClient'){ doCreateClient(); }
   else if(action==='submitProfileTreatment'){ doSaveProfileTreatment(el.getAttribute('data-id')); }
@@ -5065,6 +5070,7 @@ function handleAction(action, el){
   else if(action==='triggerPhotoUpload'){ const el2 = document.getElementById('diag_photo_input'); if(el2) el2.click(); }
   else if(action==='removeDiagPhoto'){
     const photoId = el.getAttribute('data-photoid');
+    captureDiagFormDraft();
     state.diagPhotoDrafts = state.diagPhotoDrafts.filter(p=>p.id!==photoId);
     render();
   }
@@ -5182,11 +5188,39 @@ function attachSearchHandler(){
   }
 }
 
+// Guarda todo lo que ya se completó del formulario de diagnóstico en un
+// borrador temporal — así, si algo dispara un redibujado (subir una foto),
+// no se pierde lo que la persona ya había escrito.
+function captureDiagFormDraft(){
+  const dateEl = document.getElementById('diag_date');
+  if(!dateEl) return; // el formulario no está abierto, no hay nada que guardar
+  const g = (id) => { const el = document.getElementById(id); return el ? el.value : ''; };
+  const gChecked = (name) => Array.from(document.querySelectorAll(`input[name="diag_${name}"]:checked`)).map(el=>el.value);
+  const visEl = document.getElementById('diag_visibleInPortal');
+  state.diagFormDraft = {
+    date: g('diag_date'), professional: g('diag_professional'), sucursal: g('diag_sucursal'),
+    forma: g('diag_forma'),
+    caracteristicas: gChecked('caracteristicas'),
+    otros: gChecked('otros'),
+    resistencia: g('diag_resistencia'),
+    procesadoReciente: gChecked('procesadoReciente'),
+    procesadoRecienteOtro: g('diag_procesadoRecienteOtro'),
+    habitos: gChecked('habitos'),
+    enfermedad: gChecked('enfermedad'),
+    enfermedadOtro: g('diag_enfermedadOtro'),
+    tipoPielCabelluda: g('diag_tipoPielCabelluda'),
+    objetivosCliente: g('diag_objetivosCliente'),
+    quePodemosLograr: g('diag_quePodemosLograr'),
+    visibleInPortal: visEl ? visEl.checked : false,
+  };
+}
+
 function attachDiagPhotoHandler(){
   const fileInput = document.getElementById('diag_photo_input');
   if(!fileInput) return;
   fileInput.onchange = async (e) => {
     const files = Array.from(e.target.files || []);
+    captureDiagFormDraft();
     for(const file of files){
       try{
         const dataUrl = await storageService.compressImage(file);
@@ -5541,6 +5575,7 @@ async function doSaveDiagnosis(clientId, diagId){
     await diagnosisRepository.update(diagId, data);
     await auditRepository.log('diagnosis.edit', {entity:'diagnoses', entityId:diagId, description:`Diagnóstico editado para ${c.name}`, branch:data.sucursal});
     state.diagPhotoDrafts = [];
+    state.diagFormDraft = null;
     state.errors.newDiagnosis = null;
     state.modal = null;
     render();
@@ -5550,6 +5585,7 @@ async function doSaveDiagnosis(clientId, diagId){
     const { diagnosis, autoArchived } = await diagnosisRepository.create({ ...data, createdByStaffId: staff?staff.id:null, createdByName: staff?staff.name:'Sistema' });
     await auditRepository.log('diagnosis.create', {entity:'diagnoses', entityId:diagnosis.id, description:`Diagnóstico cargado para ${c.name}`, branch:data.sucursal});
     state.diagPhotoDrafts = [];
+    state.diagFormDraft = null;
     state.errors.newDiagnosis = null;
     state.modal = null;
     render();
