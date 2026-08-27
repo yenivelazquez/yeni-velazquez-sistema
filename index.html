@@ -1050,11 +1050,13 @@ function mergeDB(serverDB, localDB){
 
 async function loadDB(){
   let loaded = null;
+  let loadedFromServer = false;
   if(supabaseClient){
     try{
       const { data, error } = await supabaseClient.rpc('get_app_data', { secret: APP_SECRET });
       if(!error && data && Object.keys(data).length){
         loaded = data;
+        loadedFromServer = true;
       }
     }catch(e){
       console.error('No se pudo conectar con Supabase, uso el respaldo local', e);
@@ -1066,22 +1068,26 @@ async function loadDB(){
       loaded = raw ? JSON.parse(raw) : null;
     }catch(e){ console.error('No se pudo leer el respaldo local', e); }
   }
+  // Si ya vino completo de la nube, no hace falta volver a escribir nada al
+  // abrir la página — solo guardamos de nuevo si faltó completar algo (o si
+  // no se pudo traer nada de Supabase y hay que empujar lo local).
+  let needsSave = !loadedFromServer;
   DB = loaded || defaultDB();
-  if(!DB.clients) DB.clients = {};
-  if(!DB.staff) DB.staff = {};
-  if(!DB.referralCodes) DB.referralCodes = {};
-  if(!DB.benefitTypes) DB.benefitTypes = defaultDB().benefitTypes;
-  if(!DB.auditLog) DB.auditLog = [];
-  if(!DB.diagnoses) DB.diagnoses = {};
-  if(!DB.appointments) DB.appointments = {};
-  if(!DB.treatmentCatalog) DB.treatmentCatalog = {};
-  if(!DB.expenses) DB.expenses = {};
-  if(!DB.banners) DB.banners = {};
-  if(!DB.checklists) DB.checklists = {};
-  if(!DB.settings) DB.settings = defaultDB().settings;
-  if(!DB.settings.branches || !DB.settings.branches.length) DB.settings.branches = ['Sucursal Centro','Sucursal Norte'];
-  if(!DB.seeded){ seedDemoData(); DB.seeded = true; }
-  await saveDB();
+  if(!DB.clients) { DB.clients = {}; needsSave = true; }
+  if(!DB.staff) { DB.staff = {}; needsSave = true; }
+  if(!DB.referralCodes) { DB.referralCodes = {}; needsSave = true; }
+  if(!DB.benefitTypes) { DB.benefitTypes = defaultDB().benefitTypes; needsSave = true; }
+  if(!DB.auditLog) { DB.auditLog = []; needsSave = true; }
+  if(!DB.diagnoses) { DB.diagnoses = {}; needsSave = true; }
+  if(!DB.appointments) { DB.appointments = {}; needsSave = true; }
+  if(!DB.treatmentCatalog) { DB.treatmentCatalog = {}; needsSave = true; }
+  if(!DB.expenses) { DB.expenses = {}; needsSave = true; }
+  if(!DB.banners) { DB.banners = {}; needsSave = true; }
+  if(!DB.checklists) { DB.checklists = {}; needsSave = true; }
+  if(!DB.settings) { DB.settings = defaultDB().settings; needsSave = true; }
+  if(!DB.settings.branches || !DB.settings.branches.length) { DB.settings.branches = ['Sucursal Centro','Sucursal Norte']; needsSave = true; }
+  if(!DB.seeded){ seedDemoData(); DB.seeded = true; needsSave = true; }
+  if(needsSave) await saveDB();
 }
 async function saveDB(){
   if(supabaseClient){
