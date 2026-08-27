@@ -3176,7 +3176,7 @@ function configTabArchivados(){
     ${archivedDiagnoses.length ? archivedDiagnoses.map(d => {
       const c = clientRepository.getById(d.clientId);
       return `
-      <div class="list-row">
+      <div class="list-row" data-action="openModal" data-modal="viewDiagnosis" data-diagid="${d.id}" style="cursor:pointer;">
         <span>${c?c.name:'Clienta eliminada'} <span style="color:var(--text-secondary); font-size:12.5px;">— diagnóstico del ${fmtDate(d.date)}, archivado el ${fmtDate(d.archivedAt)}</span></span>
         <button class="btn btn-secondary btn-sm" data-action="openModal" data-modal="confirmDeleteDiagnosis" data-diagid="${d.id}">${Icon('trash')} Eliminar definitivamente</button>
       </div>`;
