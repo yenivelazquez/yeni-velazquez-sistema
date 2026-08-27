@@ -2196,9 +2196,9 @@ function renderStaffDashboard(){
         <div class="qi">${Icon('plus')}</div>
         <div><div class="qt">Crear nueva clienta</div><div class="qs">Dar de alta un usuario</div></div>
       </button>
-      <button class="quick-btn" data-action="goToClientesSearch">
-        <div class="qi">${Icon('clipboard')}</div>
-        <div><div class="qt">Cargar tratamiento</div><div class="qs">Buscá la clienta y tocá su fila</div></div>
+      <button class="quick-btn" data-action="setStaffView" data-view="turnos">
+        <div class="qi">${Icon('calendar')}</div>
+        <div><div class="qt">Cargar turno</div><div class="qs">Agendar un turno nuevo</div></div>
       </button>
       <button class="quick-btn" data-action="openModal" data-modal="validateCode">
         <div class="qi">${Icon('qrcode')}</div>
@@ -3588,7 +3588,7 @@ function renderClientDrawer(id){
     </div>
 
     <div class="drawer-actions">
-      <button class="btn btn-primary btn-block" data-action="openModal" data-modal="newTreatment" data-id="${c.id}">${Icon('plus')} Cargar tratamiento</button>
+      <button class="btn btn-primary btn-block" data-action="goToTurnosWithClient" data-id="${c.id}">${Icon('calendar')} Nuevo turno</button>
       <button class="btn btn-secondary btn-block" data-action="openModal" data-modal="scheduleVisit" data-id="${c.id}">${Icon('calendar')} Agendar próxima visita</button>
       ${hasPermission(PERMISSIONS.DIAGNOSES_CREATE) ? `<button class="btn btn-secondary btn-block" data-action="openModal" data-modal="newDiagnosis" data-id="${c.id}">${Icon('clipboard')} Cargar diagnóstico</button>` : ''}
     </div>
@@ -5059,6 +5059,13 @@ function handleAction(action, el){
     setState({staffLoginStep:'login', staffLoginPendingId:null});
   }
   else if(action==='clientLogout'){ clearPersistedSession(); setState({clientSession:null, clientLoginStep:'phone', clientLoginPendingId:null}); }
+  else if(action==='goToTurnosWithClient'){
+    const clientId = el.getAttribute('data-id');
+    state.errors = {};
+    state.apSelectedClientId = clientId;
+    state.apClientSearch = '';
+    setState({ staffView:'turnos', drawerClientId:null, modal:{type:'newAppointment', payload:{clientId}} });
+  }
   else if(action==='openModal'){
     const id = el.getAttribute('data-id');
     const diagid = el.getAttribute('data-diagid');
