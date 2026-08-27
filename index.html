@@ -1633,6 +1633,44 @@ function benefitIcon(name){
   if(n.includes('bienvenida')) return 'gift';
   return 'gift';
 }
+// Fecha de nacimiento con 3 selects (día/mes/año) — en vez del calendario
+// nativo, que en mobile obliga a ir mes por mes hasta atrás para llegar al
+// año que hace falta. Con esto se elige el año de una sola vez.
+const MONTH_NAMES_ES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+function birthdateSelectsHTML(prefix, value){
+  const [y,m,d] = (value||'').split('-');
+  const dNum = d ? parseInt(d,10) : null;
+  const mNum = m ? parseInt(m,10) : null;
+  const yNum = y ? parseInt(y,10) : null;
+  const currentYear = new Date().getFullYear();
+  const days = Array.from({length:31}, (_,i)=>i+1);
+  const years = Array.from({length:95}, (_,i)=>currentYear-i);
+  return `
+  <div style="display:grid; grid-template-columns:0.8fr 1.3fr 1fr; gap:8px;">
+    <select class="input" id="${prefix}_day">
+      <option value="">Día</option>
+      ${days.map(dd=>`<option value="${String(dd).padStart(2,'0')}" ${dNum===dd?'selected':''}>${dd}</option>`).join('')}
+    </select>
+    <select class="input" id="${prefix}_month">
+      <option value="">Mes</option>
+      ${MONTH_NAMES_ES.map((mm,i)=>`<option value="${String(i+1).padStart(2,'0')}" ${mNum===i+1?'selected':''}>${mm}</option>`).join('')}
+    </select>
+    <select class="input" id="${prefix}_year">
+      <option value="">Año</option>
+      ${years.map(yy=>`<option value="${yy}" ${yNum===yy?'selected':''}>${yy}</option>`).join('')}
+    </select>
+  </div>`;
+}
+function readBirthdateSelects(prefix){
+  const dEl = document.getElementById(`${prefix}_day`);
+  const mEl = document.getElementById(`${prefix}_month`);
+  const yEl = document.getElementById(`${prefix}_year`);
+  if(!dEl || !mEl || !yEl) return null;
+  const d = dEl.value, m = mEl.value, y = yEl.value;
+  if(!d || !m || !y) return null;
+  return `${y}-${m}-${d}`;
+}
+
 function initials(name){
   return (name||'?').trim().split(/\s+/).map(w=>w[0]).slice(0,2).join('').toUpperCase();
 }
@@ -2625,7 +2663,7 @@ function relativeTimeFromNow(isoString){
 }
 function mostFrequentTreatment(diagnoses){
   const count = {};
-  diagnoses.forEach(d => (d.procesadoReciente||[]).forEach(p => { count[p] = (count[p]||0)+1; }));
+  diagnoses.forEach(d => { if(d.tratamiento) count[d.tratamiento] = (count[d.tratamiento]||0)+1; });
   const sorted = Object.entries(count).sort((a,b)=>b[1]-a[1]);
   return sorted.length ? sorted[0][0] : '—';
 }
@@ -2745,7 +2783,7 @@ function renderStaffDiagnosticos(){
       </div>
       <div class="glass metric-sm-card">
         <div class="metric-sm-icon" style="background:#ECFDF5;">${Icon('sparkles')}</div>
-        <div class="metric-sm-label">Procesado más frecuente</div>
+        <div class="metric-sm-label">Tratamiento frecuente</div>
         <div class="metric-sm-value" style="font-size:16px;">${mostFrequentTreatment(herDiag)}</div>
       </div>
       <div class="glass metric-sm-card">
@@ -2773,6 +2811,7 @@ function renderStaffDiagnosticos(){
                 <span class="badge ${d.visibleInPortal?'badge-pink':'badge-gray'}">${d.visibleInPortal? 'Visible en el portal':'Solo uso interno'}</span>
               </div>
               ${d.objetivosCliente ? `<p style="font-size:13.5px; margin:10px 0 0;"><strong>Objetivos:</strong> ${d.objetivosCliente}</p>` : ''}
+              ${d.tratamiento ? `<p style="font-size:13.5px; margin:6px 0 0;"><strong>Tratamiento:</strong> ${d.tratamiento}</p>` : ''}
               <div class="diag-tag-row">
                 ${d.forma?`<span class="diag-tag">${d.forma}</span>`:''}
                 ${(d.caracteristicas||[]).map(x=>`<span class="diag-tag">${x}</span>`).join('')}
@@ -3530,7 +3569,7 @@ function modalCreateClient(){
   <label class="field-label">Teléfono</label>
   <input class="input" id="f_phone" placeholder="Ej: 341 123 4567" style="margin-bottom:14px;">
   <label class="field-label">Fecha de nacimiento (opcional)</label>
-  <input class="input" id="f_birthdate" type="date" style="margin-bottom:14px;">
+  <div style="margin-bottom:14px;">${birthdateSelectsHTML('f_birthdate', '')}</div>
   <label class="field-label">Sucursal</label>
   ${branchLocked ? `
     <select class="input" id="f_sucursal" disabled style="margin-bottom:6px; opacity:0.7;">
@@ -3624,12 +3663,10 @@ function renderClientDrawer(id){
       <button class="btn btn-secondary btn-sm" style="flex:1;" data-action="viewCodeUsage" data-id="${c.id}">${Icon('search')} Ver uso del código</button>
     </div>
 
-    <div style="display:flex; align-items:flex-end; gap:8px; margin-bottom:22px;">
-      <div style="flex:1;">
-        <label class="field-label">${Icon('star')} Fecha de nacimiento</label>
-        <input class="input" id="drawer_birthdate" type="date" value="${c.birthdate||''}">
-      </div>
-      <button class="btn btn-secondary btn-sm" data-action="saveDrawerBirthdate" data-id="${c.id}">Guardar</button>
+    <div style="margin-bottom:22px;">
+      <label class="field-label">${Icon('star')} Fecha de nacimiento</label>
+      ${birthdateSelectsHTML('drawer_birthdate', c.birthdate||'')}
+      <button class="btn btn-secondary btn-sm btn-block" style="margin-top:8px;" data-action="saveDrawerBirthdate" data-id="${c.id}">Guardar</button>
     </div>
 
     <div style="display:flex; align-items:flex-end; gap:8px; margin-bottom:22px;">
@@ -3983,6 +4020,12 @@ function modalNewDiagnosis(m){
   <label class="field-label">Qué podemos lograr</label>
   <textarea class="input" id="diag_quePodemosLograr" rows="2" style="margin-bottom:14px; resize:vertical;">${src.quePodemosLograr||''}</textarea>
 
+  <label class="field-label">Tratamiento a realizar</label>
+  <select class="input" id="diag_tratamiento" style="margin-bottom:14px;">
+    <option value="">Sin especificar</option>
+    ${treatmentCatalogRepository.getActive().sort((a,b)=>a.name.localeCompare(b.name)).map(t=>`<option ${src.tratamiento===t.name?'selected':''}>${t.name}</option>`).join('')}
+  </select>
+
   <label style="display:flex; align-items:center; gap:8px; margin:6px 0 16px; font-size:13.5px; font-weight:500; cursor:pointer;">
     <input type="checkbox" id="diag_visibleInPortal" ${src.visibleInPortal?'checked':''} style="width:16px; height:16px; accent-color:var(--pink);">
     Mostrar esta evaluación en el Portal de Clientas
@@ -4139,6 +4182,7 @@ function modalViewDiagnosis(m){
 
   ${d.objetivosCliente ? `<div class="modal-subtitle">Objetivos del cliente</div><p style="font-size:13.5px; margin:0 0 16px;">${d.objetivosCliente}</p>` : ''}
   ${d.quePodemosLograr ? `<div class="modal-subtitle">Qué podemos lograr</div><p style="font-size:13.5px; margin:0 0 16px;">${d.quePodemosLograr}</p>` : ''}
+  ${d.tratamiento ? `<div class="modal-subtitle">Tratamiento a realizar</div><p style="font-size:13.5px; margin:0 0 16px;"><span class="diag-tag">${d.tratamiento}</span></p>` : ''}
 
   <div class="modal-subtitle">Fotografías</div>
   ${(d.photos||[]).length ? `
@@ -4813,6 +4857,7 @@ function clientDiagnosisCardHTML(d){
       ${d.tipoPielCabelluda?`<span class="diag-tag">Piel: ${d.tipoPielCabelluda}</span>`:''}
     </div>
     ${d.objetivosCliente ? `<p style="font-size:13.5px; margin:10px 0 0;"><strong>Objetivos:</strong> ${d.objetivosCliente}</p>` : ''}
+    ${d.tratamiento ? `<p style="font-size:13.5px; margin:6px 0 0;"><strong>Tratamiento:</strong> ${d.tratamiento}</p>` : ''}
     ${d.quePodemosLograr ? `<p style="font-size:12.5px; color:var(--text-secondary); margin:8px 0 0;">Qué podemos lograr: ${d.quePodemosLograr}</p>` : ''}
     ${clientPhotos.length ? `
       <div class="photo-chip-grid" style="margin-top:12px;">
@@ -5330,6 +5375,7 @@ function captureDiagFormDraft(){
     tipoPielCabelluda: g('diag_tipoPielCabelluda'),
     objetivosCliente: g('diag_objetivosCliente'),
     quePodemosLograr: g('diag_quePodemosLograr'),
+    tratamiento: g('diag_tratamiento'),
     visibleInPortal: visEl ? visEl.checked : false,
   };
 }
@@ -5421,7 +5467,7 @@ async function doCreateClient(){
   const lastName = document.getElementById('f_lastname').value.trim();
   const name = `${firstName} ${lastName}`.trim();
   const phoneRaw = document.getElementById('f_phone').value.trim();
-  const birthdate = document.getElementById('f_birthdate').value || null;
+  const birthdate = readBirthdateSelects('f_birthdate');
   const sucursal = document.getElementById('f_sucursal').value;
   const refInput = document.getElementById('f_refcode').value.trim().toUpperCase();
   const phone = normalizePhone(phoneRaw);
@@ -5685,6 +5731,7 @@ async function doSaveDiagnosis(clientId, diagId){
     tipoPielCabelluda: g('diag_tipoPielCabelluda'),
     objetivosCliente: g('diag_objetivosCliente'),
     quePodemosLograr: g('diag_quePodemosLograr'),
+    tratamiento: g('diag_tratamiento'),
     visibleInPortal: document.getElementById('diag_visibleInPortal').checked,
     photos,
   };
@@ -6088,7 +6135,7 @@ function portalUrl(){
 async function doSaveBirthdate(id){
   const c = clientRepository.getById(id);
   if(!c) return;
-  const birthdate = document.getElementById('drawer_birthdate').value || null;
+  const birthdate = readBirthdateSelects('drawer_birthdate');
   await clientRepository.update(id, { birthdate });
   render();
   showToast('Fecha de nacimiento guardada');
