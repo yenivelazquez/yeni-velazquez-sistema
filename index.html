@@ -2004,7 +2004,7 @@ function renderStaffApp(){
   else if(state.staffView==='turnos') content = renderStaffTurnos();
   else if(state.staffView==='beneficios') content = renderStaffBeneficios();
   else if(state.staffView==='cumpleanos') content = renderStaffCumpleanos();
-  else if(state.staffView==='checklist') content = hasPermission(PERMISSIONS.TEAM_MANAGE) ? renderChecklistTeamPanel(staffRepository.getAll()) : renderStaffChecklist();
+  else if(state.staffView==='checklist') content = hasPermission(PERMISSIONS.SETTINGS_MANAGE) ? renderChecklistTeamPanel(staffRepository.getAll()) : renderStaffChecklist();
   else if(state.staffView==='equipo') content = renderStaffEquipo();
   else if(state.staffView==='configuracion') content = renderStaffConfiguracion();
   else if(state.staffView==='reportes') content = renderStaffReportes();
@@ -2089,7 +2089,7 @@ function renderStaffApp(){
               <p>${new Date().toLocaleDateString('es-AR',{weekday:'long', day:'numeric', month:'long'})}</p>
             ` : state.staffView==='checklist' ? `
               <h1 style="display:flex; align-items:center; gap:12px;"><span style="width:40px; height:40px; border-radius:14px; background:var(--pink-light); color:var(--pink-dark); display:inline-flex; align-items:center; justify-content:center;">${Icon('check')}</span> Checklist diario</h1>
-              <p>${hasPermission(PERMISSIONS.TEAM_MANAGE) ? 'Quién completó el checklist de hoy en el equipo.' : 'Marcá cada punto a medida que lo vas cumpliendo en el día.'}</p>
+              <p>${hasPermission(PERMISSIONS.SETTINGS_MANAGE) ? 'Quién completó el checklist de hoy en el equipo.' : 'Marcá cada punto a medida que lo vas cumpliendo en el día.'}</p>
             ` : `
               <h1>${activeNavItem ? activeNavItem.label : ''}</h1>
               <p>${new Date().toLocaleDateString('es-AR',{weekday:'long', day:'numeric', month:'long'})}</p>
@@ -2183,7 +2183,7 @@ function renderStaffDashboard(){
   const meForChecklist = currentStaff();
   const myChecklistRecord = meForChecklist ? checklistRepository.getByStaffDate(meForChecklist.id, todayStr) : null;
   const myChecklistProgress = checklistProgress(myChecklistRecord);
-  const checklistPending = !hasPermission(PERMISSIONS.TEAM_MANAGE) && myChecklistProgress.total>0 && myChecklistProgress.done < myChecklistProgress.total;
+  const checklistPending = !hasPermission(PERMISSIONS.SETTINGS_MANAGE) && myChecklistProgress.total>0 && myChecklistProgress.done < myChecklistProgress.total;
 
   return `
   ${checklistPending ? `
