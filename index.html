@@ -1819,6 +1819,7 @@ const state = {
   checklistTeamDate: new Date().toISOString().slice(0,10),
   diagFormDraft: null,
   authLoading: false,
+  diagSaving: false,
 };
 
 function setState(patch){ Object.assign(state, patch); render(); }
@@ -4062,7 +4063,7 @@ function modalNewDiagnosis(m){
   <input type="file" id="diag_photo_input" accept="image/*" multiple style="display:none">
 
   ${state.errors.newDiagnosis ? `<div style="color:#DC2626; font-size:13px; margin:10px 0 0;">${state.errors.newDiagnosis}</div>`:''}
-  <button class="btn btn-primary btn-block" style="margin-top:14px;" data-action="submitDiagnosis" data-id="${c.id}" data-diagid="${editing?editing.id:''}">${editing?'Guardar cambios':'Guardar evaluación'}</button>
+  <button class="btn btn-primary btn-block" style="margin-top:14px;" data-action="submitDiagnosis" data-id="${c.id}" data-diagid="${editing?editing.id:''}" ${state.diagSaving?'disabled style="opacity:0.7; margin-top:14px;"':''}>${state.diagSaving?'Guardando…':(editing?'Guardar cambios':'Guardar evaluación')}</button>
   `;
 }
 
@@ -5148,6 +5149,7 @@ function handleAction(action, el){
     state.errors={};
     state.diagPhotoDrafts = [];
     state.diagFormDraft = null;
+    state.diagSaving = false;
     state.apClientSearch = '';
     state.bannerImageDraft = null;
     if(modalType==='editAppointment' && id){
@@ -5183,7 +5185,7 @@ function handleAction(action, el){
   }
   else if(action==='submitScheduleVisit'){ doScheduleVisit(el.getAttribute('data-id')); }
   else if(action==='resetPassword'){ doResetPassword(el.getAttribute('data-id')); }
-  else if(action==='closeModal'){ state.diagFormDraft = null; setState({modal:null}); }
+  else if(action==='closeModal'){ state.diagFormDraft = null; state.diagSaving = false; setState({modal:null}); }
   else if(action==='closeModalBg'){ setState({modal:null}); }
   else if(action==='submitCreateClient'){ doCreateClient(); }
   else if(action==='submitProfileTreatment'){ doSaveProfileTreatment(el.getAttribute('data-id')); }
@@ -5752,6 +5754,7 @@ async function doMarkDelivered(id, benefitId){
 }
 
 async function doSaveDiagnosis(clientId, diagId){
+  if(state.diagSaving) return; // ya se está guardando — ignoramos el toque de más
   const c = clientRepository.getById(clientId);
   if(!c) return;
   if(state.diagPhotoDrafts.some(p=>p.uploading)){
@@ -5759,6 +5762,9 @@ async function doSaveDiagnosis(clientId, diagId){
     render();
     return;
   }
+  state.diagSaving = true;
+  state.errors.newDiagnosis = null;
+  render();
   const g = (id) => { const el = document.getElementById(id); return el ? el.value.trim() : ''; };
   const gChecked = (name) => Array.from(document.querySelectorAll(`input[name="diag_${name}"]:checked`)).map(el=>el.value);
 
@@ -5787,7 +5793,7 @@ async function doSaveDiagnosis(clientId, diagId){
     visibleInPortal: document.getElementById('diag_visibleInPortal').checked,
     photos,
   };
-  if(!data.date){ state.errors.newDiagnosis = 'Elegí una fecha.'; render(); return; }
+  if(!data.date){ state.diagSaving = false; state.errors.newDiagnosis = 'Elegí una fecha.'; render(); return; }
 
   if(diagId){
     await diagnosisRepository.update(diagId, data);
@@ -5795,6 +5801,7 @@ async function doSaveDiagnosis(clientId, diagId){
     state.diagPhotoDrafts = [];
     state.diagFormDraft = null;
     state.errors.newDiagnosis = null;
+    state.diagSaving = false;
     state.modal = null;
     render();
     showToast('Diagnóstico actualizado');
@@ -5805,6 +5812,7 @@ async function doSaveDiagnosis(clientId, diagId){
     state.diagPhotoDrafts = [];
     state.diagFormDraft = null;
     state.errors.newDiagnosis = null;
+    state.diagSaving = false;
     state.modal = null;
     render();
     showToast(`Diagnóstico cargado para ${c.name}`);
