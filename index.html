@@ -854,7 +854,15 @@ const APP_CONFIG = {
 };
 
 function uid(){
-  return (crypto && crypto.randomUUID) ? crypto.randomUUID() : 'id_'+Date.now()+'_'+Math.random().toString(36).slice(2,9);
+  if(crypto && crypto.randomUUID) return crypto.randomUUID();
+  // Plan B para navegadores viejos o contextos no seguros (por ejemplo,
+  // abrir el archivo directo con file://) — genera un UUID v4 válido a
+  // mano, porque las tablas de Supabase exigen ese formato exacto.
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = Math.random()*16|0;
+    const v = c==='x' ? r : (r&0x3|0x8);
+    return v.toString(16);
+  });
 }
 function nowIso(){ return new Date().toISOString(); }
 
@@ -997,91 +1005,13 @@ function defaultDB(){
 }
 
 /* =========================================================
-   MEZCLA DE DATOS (merge) — el corazón del arreglo de sincronización.
-
-   Antes, guardar significaba "pisar toda la base con mi copia" — si dos
-   personas guardaban casi a la vez, la última se comía los cambios de la
-   otra. Ahora, antes de escribir, siempre se combina lo último de la nube
-   con lo que se acaba de cambiar acá: por cada registro (cada clienta, cada
-   turno, cada diagnóstico...) se compara cuál de las dos versiones es más
-   reciente y esa es la que queda. Así, cambios de otras personas en OTROS
-   registros nunca se pierden.
+   PERSISTENCIA — tablas separadas en Supabase (una por cada tipo de
+   dato: clientas, turnos, diagnósticos, etc.) en vez de un solo paquete
+   gigante. Cada guardado toca solo la tabla que corresponde.
    ========================================================= */
-function mergeCollectionById(serverColl, localColl){
-  const merged = {};
-  const allIds = new Set([...Object.keys(serverColl||{}), ...Object.keys(localColl||{})]);
-  allIds.forEach(id => {
-    const s = serverColl ? serverColl[id] : undefined;
-    const l = localColl ? localColl[id] : undefined;
-    if(s && !l) merged[id] = s;
-    else if(l && !s) merged[id] = l;
-    else {
-      const sTime = new Date(s.updatedAt || s.createdAt || 0).getTime();
-      const lTime = new Date(l.updatedAt || l.createdAt || 0).getTime();
-      merged[id] = lTime >= sTime ? l : s;
-    }
-  });
-  return merged;
-}
-function mergeArrayById(serverArr, localArr){
-  const sMap = {}; (serverArr||[]).forEach(x=>{ if(x && x.id) sMap[x.id]=x; });
-  const lMap = {}; (localArr||[]).forEach(x=>{ if(x && x.id) lMap[x.id]=x; });
-  return Object.values(mergeCollectionById(sMap, lMap));
-}
-function mergeByUpdatedAt(s, l){
-  if(!s) return l||null;
-  if(!l) return s;
-  const sTime = new Date(s.updatedAt || 0).getTime();
-  const lTime = new Date(l.updatedAt || 0).getTime();
-  return lTime >= sTime ? l : s;
-}
-// Los checklists se mezclan distinto al resto: en vez de "gana la versión
-// más nueva entera" (que podía llegar a borrar tildes ya puestos por otro
-// dispositivo), acá COMBINAMOS los casilleros de las dos versiones — un
-// casillero tildado nunca se "destilda" solo al mezclar.
-function mergeChecklistsCollection(serverColl, localColl){
-  const merged = {};
-  const allIds = new Set([...Object.keys(serverColl||{}), ...Object.keys(localColl||{})]);
-  allIds.forEach(id => {
-    const s = serverColl ? serverColl[id] : undefined;
-    const l = localColl ? localColl[id] : undefined;
-    if(s && !l) merged[id] = s;
-    else if(l && !s) merged[id] = l;
-    else {
-      const base = (new Date(l.updatedAt||0) >= new Date(s.updatedAt||0)) ? l : s;
-      const other = base === l ? s : l;
-      const mergedChecks = {};
-      CHECKLIST_SECTIONS.forEach(sec => {
-        const a = (base.checks && base.checks[sec.id]) || [];
-        const b = (other.checks && other.checks[sec.id]) || [];
-        mergedChecks[sec.id] = a.map((v,i) => v || !!b[i]);
-      });
-      merged[id] = { ...base, checks: mergedChecks, reflexion: base.reflexion || other.reflexion };
-    }
-  });
-  return merged;
-}
+const SB_TABLES = ['clients','staff','referral_codes','diagnoses','appointments',
+  'treatment_catalog','expenses','banners','checklists','benefit_types','audit_log','settings'];
 
-function mergeDB(serverDB, localDB){
-  if(!serverDB || !Object.keys(serverDB).length) return localDB;
-  if(!localDB) return serverDB;
-  const merged = { ...serverDB, ...localDB };
-  ['clients','staff','diagnoses','appointments','treatmentCatalog','expenses','banners','referralCodes'].forEach(key => {
-    merged[key] = mergeCollectionById(serverDB[key], localDB[key]);
-  });
-  merged.checklists = mergeChecklistsCollection(serverDB.checklists, localDB.checklists);
-  merged.benefitTypes = mergeArrayById(serverDB.benefitTypes, localDB.benefitTypes);
-  merged.settings = mergeByUpdatedAt(serverDB.settings, localDB.settings) || localDB.settings || serverDB.settings;
-  const mergedAudit = mergeArrayById(serverDB.auditLog, localDB.auditLog);
-  mergedAudit.sort((a,b)=> new Date(b.at) - new Date(a.at));
-  merged.auditLog = mergedAudit.slice(0, 300);
-  merged.seeded = !!(serverDB.seeded || localDB.seeded);
-  return merged;
-}
-
-// Si Supabase tarda demasiado en responder (por una falla o lentitud de
-// su lado), esto evita que la página quede esperando para siempre — a
-// los 10 segundos, sigue de largo y usa el respaldo del dispositivo.
 function withTimeout(promise, ms){
   return Promise.race([
     promise,
@@ -1089,145 +1019,226 @@ function withTimeout(promise, ms){
   ]);
 }
 
-async function loadDB(){
-  let loaded = null;
-  let loadedFromServer = false;
-  if(supabaseClient){
-    try{
-      const { data, error } = await withTimeout(supabaseClient.rpc('get_app_data', { secret: APP_SECRET }), 10000);
-      if(!error && data && Object.keys(data).length){
-        loaded = data;
-        loadedFromServer = true;
-        lastKnownDataTimestamp = new Date().toISOString();
-      }
-    }catch(e){
-      console.error('No se pudo conectar con Supabase, uso el respaldo local', e);
-    }
+async function sbSelectAll(table){
+  if(!supabaseClient) return [];
+  const { data, error } = await withTimeout(supabaseClient.rpc('secure_select_all', { secret: APP_SECRET, tbl: table }), 15000);
+  if(error){ console.error(`Error trayendo ${table}`, error); return []; }
+  return data || [];
+}
+async function sbUpsert(table, rowData){
+  if(!supabaseClient) return;
+  const { error } = await withTimeout(supabaseClient.rpc('secure_upsert', { secret: APP_SECRET, tbl: table, row_data: rowData }), 15000);
+  if(error){
+    console.error(`Error guardando en ${table}`, error);
+    showToast('No se pudo guardar en la nube — revisá tu conexión a internet.');
+    throw error;
   }
-  if(!loaded){
+}
+async function sbDelete(table, id){
+  if(!supabaseClient) return;
+  const { error } = await withTimeout(supabaseClient.rpc('secure_delete', { secret: APP_SECRET, tbl: table, row_id: String(id) }), 15000);
+  if(error){
+    console.error(`Error eliminando de ${table}`, error);
+    showToast('No se pudo eliminar en la nube — revisá tu conexión a internet.');
+    throw error;
+  }
+}
+
+/* ---- Traductores: la app sigue usando los mismos nombres de campo de
+   siempre (camelCase) — estas funciones convierten hacia/desde el
+   formato de las tablas (snake_case) al leer y guardar. ---- */
+const rowConverters = {
+  clients: {
+    fromRow: r => ({ id:r.id, name:r.name, phone:r.phone, sucursal:r.sucursal, birthdate:r.birthdate,
+      password:r.password, passwordSet:!!r.password_set, referralCode:r.referral_code, referredBy:r.referred_by,
+      points:r.points||0, benefitsClaimed:r.benefits_claimed||[], archived:!!r.archived, archivedAt:r.archived_at,
+      treatments:r.treatments||[], scheduledNextVisit:r.scheduled_next_visit,
+      createdAt:r.created_at, updatedAt:r.updated_at }),
+    toRow: c => ({ id:c.id, name:c.name, phone:c.phone, sucursal:c.sucursal||null, birthdate:c.birthdate||null,
+      password:c.password||null, password_set:!!c.passwordSet, referral_code:c.referralCode||null, referred_by:c.referredBy||null,
+      points:c.points||0, benefits_claimed:c.benefitsClaimed||[], archived:!!c.archived, archived_at:c.archivedAt||null,
+      treatments:c.treatments||[], scheduled_next_visit:c.scheduledNextVisit||null,
+      created_at:c.createdAt, updated_at:c.updatedAt }),
+  },
+  staff: {
+    fromRow: r => ({ id:r.id, name:r.name, email:r.email, role:r.role, branch:r.branch, branchScope:r.branch_scope,
+      status:r.status, password:r.password, passwordSet:!!r.password_set, invitedAt:r.invited_at,
+      activatedAt:r.activated_at, lastLogin:r.last_login }),
+    toRow: s => ({ id:s.id, name:s.name, email:s.email, role:s.role, branch:s.branch||null, branch_scope:s.branchScope||'own',
+      status:s.status||'invited', password:s.password||null, password_set:!!s.passwordSet, invited_at:s.invitedAt||null,
+      activated_at:s.activatedAt||null, last_login:s.lastLogin||null }),
+  },
+  referral_codes: {
+    fromRow: r => ({ code:r.code, ownerId:r.client_id, used:!!r.used, usedByClientId:r.used_by_client_id,
+      usedByName:r.used_by_name, usedAt:r.used_at, createdAt:r.created_at }),
+    toRow: r => ({ code:r.code, client_id:r.ownerId||null, used:!!r.used, used_by_client_id:r.usedByClientId||null,
+      used_by_name:r.usedByName||null, used_at:r.usedAt||null, created_at:r.createdAt }),
+  },
+  diagnoses: {
+    fromRow: r => ({ id:r.id, clientId:r.client_id, date:r.date, professional:r.professional, sucursal:r.sucursal,
+      forma:r.forma, caracteristicas:r.caracteristicas||[], otros:r.otros||[], resistencia:r.resistencia,
+      procesadoReciente:r.procesado_reciente||[], procesadoRecienteOtro:r.procesado_reciente_otro,
+      habitos:r.habitos||[], enfermedad:r.enfermedad||[], enfermedadOtro:r.enfermedad_otro,
+      tipoPielCabelluda:r.tipo_piel_cabelluda, objetivosCliente:r.objetivos_cliente, quePodemosLograr:r.que_podemos_lograr,
+      tratamiento:r.tratamiento, visibleInPortal:!!r.visible_in_portal, photos:r.photos||[], status:r.status,
+      createdByName:r.created_by_name, archivedAt:r.archived_at, createdAt:r.created_at, updatedAt:r.updated_at }),
+    toRow: d => ({ id:d.id, client_id:d.clientId||null, date:d.date, professional:d.professional||null, sucursal:d.sucursal||null,
+      forma:d.forma||null, caracteristicas:d.caracteristicas||[], otros:d.otros||[], resistencia:d.resistencia||null,
+      procesado_reciente:d.procesadoReciente||[], procesado_reciente_otro:d.procesadoRecienteOtro||null,
+      habitos:d.habitos||[], enfermedad:d.enfermedad||[], enfermedad_otro:d.enfermedadOtro||null,
+      tipo_piel_cabelluda:d.tipoPielCabelluda||null, objetivos_cliente:d.objetivosCliente||null, que_podemos_lograr:d.quePodemosLograr||null,
+      tratamiento:d.tratamiento||null, visible_in_portal:!!d.visibleInPortal, photos:d.photos||[], status:d.status||'active',
+      created_by_name:d.createdByName||null, archived_at:d.archivedAt||null, created_at:d.createdAt, updated_at:d.updatedAt }),
+  },
+  appointments: {
+    fromRow: r => ({ id:r.id, clientId:r.client_id, date:r.date, time:r.time, sucursal:r.sucursal,
+      professional:r.professional, treatment:r.treatment, durationMinutes:r.duration, status:r.status,
+      createdByName:r.created_by_name, notes:r.notes, linkedTreatmentId:r.linked_treatment_id,
+      createdAt:r.created_at, updatedAt:r.updated_at }),
+    toRow: a => ({ id:a.id, client_id:a.clientId||null, date:a.date, time:a.time, sucursal:a.sucursal||null,
+      professional:a.professional||null, treatment:a.treatment||null, duration:a.durationMinutes||null, status:a.status||'pending',
+      created_by_name:a.createdByName||null, notes:a.notes||null, linked_treatment_id:a.linkedTreatmentId||null,
+      created_at:a.createdAt, updated_at:a.updatedAt }),
+  },
+  treatment_catalog: {
+    fromRow: r => ({ id:r.id, name:r.name, price:r.price, cost:r.cost, status:r.status, createdAt:r.created_at, updatedAt:r.updated_at }),
+    toRow: t => ({ id:t.id, name:t.name, price:t.price!=null?t.price:null, cost:t.cost!=null?t.cost:null,
+      status:t.status||'active', created_at:t.createdAt, updated_at:t.updatedAt }),
+  },
+  expenses: {
+    fromRow: r => ({ id:r.id, description:r.description, category:r.category, amount:r.amount, date:r.date,
+      sucursal:r.sucursal, staffId:r.staff_id, createdAt:r.created_at }),
+    toRow: e => ({ id:e.id, description:e.description||null, category:e.category||null, amount:e.amount,
+      date:e.date, sucursal:e.sucursal||null, staff_id:e.staffId||null, created_at:e.createdAt }),
+  },
+  banners: {
+    fromRow: r => ({ id:r.id, image:r.image_url, caption:r.caption, link:r.link, active:!!r.active,
+      createdAt:r.created_at, updatedAt:r.updated_at }),
+    toRow: b => ({ id:b.id, image_url:b.image||null, caption:b.caption||null, link:b.link||null,
+      active: b.active!==false, created_at:b.createdAt, updated_at:b.updatedAt }),
+  },
+  checklists: {
+    fromRow: r => ({ id:r.id, staffId:r.staff_id, staffName:r.staff_name, date:r.date, checks:r.checks||{},
+      reflexion:r.reflexion, createdAt:r.created_at, updatedAt:r.updated_at }),
+    toRow: c => ({ id:c.id, staff_id:c.staffId, staff_name:c.staffName||null, date:c.date, checks:c.checks||{},
+      reflexion:c.reflexion||null, created_at:c.createdAt, updated_at:c.updatedAt }),
+  },
+  benefit_types: {
+    fromRow: r => ({ id:r.id, name:r.name, icon:r.icon }),
+    toRow: b => ({ id:b.id, name:b.name, icon:b.icon||null, created_at: nowIso() }),
+  },
+  settings: {
+    fromRow: r => ({ salonName:r.salon_name, tagline:r.tagline, branches:r.branches||[], hours:r.hours, updatedAt:r.updated_at }),
+    toRow: s => ({ id:1, salon_name:s.salonName||null, tagline:s.tagline||null, branches:s.branches||[],
+      hours:s.hours||null, updated_at:s.updatedAt }),
+  },
+};
+
+async function loadDB(){
+  DB = defaultDB();
+  if(!supabaseClient){
     try{
       const raw = localStorage.getItem(DB_KEY);
-      loaded = raw ? JSON.parse(raw) : null;
+      if(raw) DB = JSON.parse(raw);
     }catch(e){ console.error('No se pudo leer el respaldo local', e); }
-  }
-  // Si ya vino completo de la nube, no hace falta volver a escribir nada al
-  // abrir la página — solo guardamos de nuevo si faltó completar algo (o si
-  // no se pudo traer nada de Supabase y hay que empujar lo local).
-  let needsSave = !loadedFromServer;
-  DB = loaded || defaultDB();
-  if(!DB.clients) { DB.clients = {}; needsSave = true; }
-  if(!DB.staff) { DB.staff = {}; needsSave = true; }
-  if(!DB.referralCodes) { DB.referralCodes = {}; needsSave = true; }
-  if(!DB.benefitTypes) { DB.benefitTypes = defaultDB().benefitTypes; needsSave = true; }
-  if(!DB.auditLog) { DB.auditLog = []; needsSave = true; }
-  if(!DB.diagnoses) { DB.diagnoses = {}; needsSave = true; }
-  if(!DB.appointments) { DB.appointments = {}; needsSave = true; }
-  if(!DB.treatmentCatalog) { DB.treatmentCatalog = {}; needsSave = true; }
-  if(!DB.expenses) { DB.expenses = {}; needsSave = true; }
-  if(!DB.banners) { DB.banners = {}; needsSave = true; }
-  if(!DB.checklists) { DB.checklists = {}; needsSave = true; }
-  if(!DB.settings) { DB.settings = defaultDB().settings; needsSave = true; }
-  if(!DB.settings.branches || !DB.settings.branches.length) { DB.settings.branches = ['Sucursal Centro','Sucursal Norte']; needsSave = true; }
-  if(!DB.seeded){ seedDemoData(); DB.seeded = true; needsSave = true; }
-
-  // Limpieza: si quedaron checklists duplicados de antes de este arreglo
-  // (misma persona, mismo día, pero con ids al azar distintos por haberse
-  // creado desde dos dispositivos casi a la vez), los combinamos en uno
-  // solo — nos quedamos con todos los casilleros que estén tildados en
-  // cualquiera de las copias.
-  const consolidated = {};
-  let hadDuplicates = false;
-  Object.values(DB.checklists).forEach(r => {
-    const canonicalId = checklistRepository.idFor(r.staffId, r.date);
-    if(!consolidated[canonicalId]){
-      consolidated[canonicalId] = { ...r, id: canonicalId, checks: JSON.parse(JSON.stringify(r.checks||{})) };
-    } else {
-      hadDuplicates = true;
-      const existing = consolidated[canonicalId];
-      CHECKLIST_SECTIONS.forEach(sec => {
-        const a = existing.checks[sec.id] || [];
-        const b = (r.checks && r.checks[sec.id]) || [];
-        existing.checks[sec.id] = a.map((v,i) => v || !!b[i]);
-      });
-      if(!existing.reflexion && r.reflexion) existing.reflexion = r.reflexion;
-      if(new Date(r.updatedAt||0) > new Date(existing.updatedAt||0)) existing.updatedAt = r.updatedAt;
-    }
-  });
-  // Aplicamos la migración siempre (no solo cuando hay duplicados) — así
-  // los registros que tenían un identificador viejo (al azar) también
-  // quedan con el nuevo formato fijo, y se pueden encontrar bien.
-  const changedAnyId = Object.keys(consolidated).some(id => !DB.checklists[id]) || Object.keys(DB.checklists).length !== Object.keys(consolidated).length;
-  if(hadDuplicates || changedAnyId){
-    DB.checklists = consolidated;
-    needsSave = true;
-  }
-  if(needsSave) await saveDB();
-}
-async function saveDB(){
-  if(supabaseClient){
-    try{
-      // Antes de escribir, traemos la última versión de la nube y la
-      // combinamos con nuestro cambio — así nunca pisamos algo que
-      // otra persona acaba de guardar en otro registro.
-      const { data: serverData, error: fetchError } = await withTimeout(supabaseClient.rpc('get_app_data', { secret: APP_SECRET }), 15000);
-      if(!fetchError && serverData){
-        DB = mergeDB(serverData, DB);
-      }
-      const { error } = await withTimeout(supabaseClient.rpc('save_app_data', { secret: APP_SECRET, new_data: DB }), 15000);
-      if(error){
-        console.error('Error guardando en Supabase', error);
-        showToast('No se pudo guardar en la nube — revisá tu conexión a internet.');
-      } else {
-        lastKnownDataTimestamp = new Date().toISOString();
-      }
-    }catch(e){
-      console.error('Error de red guardando en Supabase', e);
-      showToast('No se pudo guardar en la nube — revisá tu conexión a internet.');
-    }
+    return;
   }
   try{
-    localStorage.setItem(DB_KEY, JSON.stringify(DB));
+    const [clientsRows, staffRows, refRows, diagRows, apptRows, catalogRows, expenseRows, bannerRows, checklistRows, benefitRows, settingsRows, auditRows] = await Promise.all([
+      sbSelectAll('clients'), sbSelectAll('staff'), sbSelectAll('referral_codes'), sbSelectAll('diagnoses'),
+      sbSelectAll('appointments'), sbSelectAll('treatment_catalog'), sbSelectAll('expenses'), sbSelectAll('banners'),
+      sbSelectAll('checklists'), sbSelectAll('benefit_types'), sbSelectAll('settings'), sbSelectAll('audit_log'),
+    ]);
+
+    DB.clients = {}; clientsRows.forEach(r => { const c = rowConverters.clients.fromRow(r); DB.clients[c.id] = c; });
+    DB.staff = {}; staffRows.forEach(r => { const s = rowConverters.staff.fromRow(r); DB.staff[s.id] = s; });
+    DB.referralCodes = {}; refRows.forEach(r => { const rc = rowConverters.referral_codes.fromRow(r); DB.referralCodes[rc.code] = rc; });
+    DB.diagnoses = {}; diagRows.forEach(r => { const d = rowConverters.diagnoses.fromRow(r); DB.diagnoses[d.id] = d; });
+    DB.appointments = {}; apptRows.forEach(r => { const a = rowConverters.appointments.fromRow(r); DB.appointments[a.id] = a; });
+    DB.treatmentCatalog = {}; catalogRows.forEach(r => { const t = rowConverters.treatment_catalog.fromRow(r); DB.treatmentCatalog[t.id] = t; });
+    DB.expenses = {}; expenseRows.forEach(r => { const e = rowConverters.expenses.fromRow(r); DB.expenses[e.id] = e; });
+    DB.banners = {}; bannerRows.forEach(r => { const b = rowConverters.banners.fromRow(r); DB.banners[b.id] = b; });
+    DB.checklists = {}; checklistRows.forEach(r => { const c = rowConverters.checklists.fromRow(r); DB.checklists[c.id] = c; });
+    DB.benefitTypes = benefitRows.map(r => rowConverters.benefit_types.fromRow(r));
+    if(settingsRows && settingsRows[0]) DB.settings = rowConverters.settings.fromRow(settingsRows[0]);
+    if(!DB.settings.branches || !DB.settings.branches.length) DB.settings.branches = ['Sucursal Centro','Sucursal Norte'];
+    DB.auditLog = auditRows
+      .map(a => ({ id:a.id, at:a.at, userId:a.user_id, userName:a.user_name, role:a.role, action:a.action,
+        entity:a.entity, entityId:a.entity_id, description:a.description, branch:a.branch }))
+      .sort((x,y)=> new Date(y.at) - new Date(x.at))
+      .slice(0, 300);
+
+    // Si la base está totalmente vacía (instalación nueva, sin datos
+    // reales todavía), sembramos los datos de demostración de siempre.
+    DB.seeded = Object.keys(DB.staff).length > 0;
+    if(!DB.seeded){ await seedDemoData(); DB.seeded = true; }
+
+    lastKnownDataTimestamp = new Date().toISOString();
+    try{ localStorage.setItem(DB_KEY, JSON.stringify(DB)); }catch(e){ console.error('No se pudo guardar el respaldo local', e); }
   }catch(e){
-    console.error('No se pudo guardar el respaldo local', e);
+    console.error('No se pudo conectar con Supabase, uso el respaldo local', e);
+    try{
+      const raw = localStorage.getItem(DB_KEY);
+      if(raw) DB = JSON.parse(raw);
+    }catch(e2){ console.error('No se pudo leer el respaldo local', e2); }
   }
 }
+
 
 /* ---- Demo data: staff con distintos roles + un par de clientas
    de ejemplo, para poder probar la beta sin arrancar de cero.
    "Restablecer datos de demostración" (Configuración) vuelve a esto. ---- */
-function seedDemoData(){
-  const mkStaff = (name, email, role, branch, branchScope, extra={}) => {
+async function seedDemoData(){
+  const mkStaff = async (name, email, role, branch, branchScope, extra={}) => {
     const id = uid();
     DB.staff[id] = { id, name, email, password:'demo1234', passwordSet:true, role, branch, branchScope,
       status:'active', invitedAt:nowIso(), activatedAt:nowIso(), lastLogin:null, ...extra };
+    await sbUpsert('staff', rowConverters.staff.toRow(DB.staff[id]));
     return id;
   };
-  mkStaff('Yeni Velázquez', 'yeni@yeniveazquez.com', ROLES.OWNER, 'Sucursal Centro', 'all');
-  mkStaff('Ana Gómez', 'ana@yeniveazquez.com', ROLES.ADMIN, 'Sucursal Centro', 'all'); // demo: admin con acceso a ambas
-  mkStaff('Carla Ríos', 'recepcion@yeniveazquez.com', ROLES.RECEPCION, 'Sucursal Centro', 'own');
-  mkStaff('Fernanda Luna', 'profesional@yeniveazquez.com', ROLES.PROFESIONAL, 'Sucursal Norte', 'own');
-  mkStaff('Marketing Balodi', 'marketing@yeniveazquez.com', ROLES.MARKETING, 'Sucursal Centro', 'own');
+  await mkStaff('Yeni Velázquez', 'yeni@yeniveazquez.com', ROLES.OWNER, 'Sucursal Centro', 'all');
+  await mkStaff('Ana Gómez', 'ana@yeniveazquez.com', ROLES.ADMIN, 'Sucursal Centro', 'all'); // demo: admin con acceso a ambas
+  await mkStaff('Carla Ríos', 'recepcion@yeniveazquez.com', ROLES.RECEPCION, 'Sucursal Centro', 'own');
+  await mkStaff('Fernanda Luna', 'profesional@yeniveazquez.com', ROLES.PROFESIONAL, 'Sucursal Norte', 'own');
+  await mkStaff('Marketing Balodi', 'marketing@yeniveazquez.com', ROLES.MARKETING, 'Sucursal Centro', 'own');
 
-  const mkClient = (name, phone, sucursal, treatments) => {
+  const mkClient = async (name, phone, sucursal, treatments) => {
     const id = uid();
     DB.clients[id] = {
       id, name, phone, birthdate:null, password:null, passwordSet:false,
-      sucursal, createdAt: nowIso(), referralCode: genCode(),
+      sucursal, createdAt: nowIso(), updatedAt: nowIso(), referralCode: genCode(),
       referredBy:null, points: treatments.length*50, treatments, benefitsClaimed:[], scheduledNextVisit:null,
     };
+    await sbUpsert('clients', rowConverters.clients.toRow(DB.clients[id]));
     return id;
   };
   const d = (daysAgo) => { const x=new Date(); x.setDate(x.getDate()-daysAgo); return x.toISOString().slice(0,10); };
-  mkClient('Julieta Martínez', '3411234567', 'Sucursal Centro', [
+  await mkClient('Julieta Martínez', '3411234567', 'Sucursal Centro', [
     {id:uid(), name:'Reconstrucción Premium', date:d(18), sucursal:'Sucursal Centro', professional:'Fernanda Luna', notes:null, nextVisitSuggested:null},
     {id:uid(), name:'Hidratación Profunda', date:d(70), sucursal:'Sucursal Centro', professional:null, notes:null, nextVisitSuggested:null},
   ]);
-  mkClient('Carolina Pérez', '3419876543', 'Sucursal Norte', []);
+  await mkClient('Carolina Pérez', '3419876543', 'Sucursal Norte', []);
 
-  const mkTreatment = (name) => { const id = uid(); DB.treatmentCatalog[id] = { id, name, price: null, status:'active', createdAt: nowIso() }; };
-  ['Nanoreconstrucción','Cauterización','Cauterización Vitamínica','NanoPlastia','Nanoplastia Pro',
+  const mkTreatment = async (name) => {
+    const id = uid();
+    DB.treatmentCatalog[id] = { id, name, price: null, cost:null, status:'active', createdAt: nowIso(), updatedAt: nowIso() };
+    await sbUpsert('treatment_catalog', rowConverters.treatment_catalog.toRow(DB.treatmentCatalog[id]));
+  };
+  for(const name of ['Nanoreconstrucción','Cauterización','Cauterización Vitamínica','NanoPlastia','Nanoplastia Pro',
    'Antifrizz Mágico','Ozonoterapia','Keratina','Vitamin Shock','Botox','Lisado',
-   'Alisado con Formol','Alisado sin Formol'].forEach(mkTreatment);
+   'Alisado con Formol','Alisado sin Formol']){
+    await mkTreatment(name);
+  }
+
+  const mkBenefitType = async (name, icon) => {
+    const id = uid();
+    DB.benefitTypes.push({ id, name, icon });
+    await sbUpsert('benefit_types', { id, name, icon, created_at: nowIso() });
+  };
+  await mkBenefitType('Kit Bienvenida', 'gift');
+  await mkBenefitType('Kit de Mantenimiento', 'sparkles');
+  await mkBenefitType('Descuento Cumpleaños', 'star');
+  await mkBenefitType('Brushing de Cortesía', 'sparkles');
 }
 
 /* =========================================================
@@ -1244,20 +1255,20 @@ const clientRepository = {
   getByPhone: (phone) => Object.values(DB.clients).find(c => c.phone === phone) || null,
   create: async (data) => {
     const id = uid();
-    DB.clients[id] = { id, createdAt: nowIso(), treatments:[], benefitsClaimed:[], points:0, scheduledNextVisit:null, ...data };
-    await saveDB();
+    DB.clients[id] = { id, createdAt: nowIso(), updatedAt: nowIso(), treatments:[], benefitsClaimed:[], points:0, scheduledNextVisit:null, ...data };
+    await sbUpsert('clients', rowConverters.clients.toRow(DB.clients[id]));
     return DB.clients[id];
   },
   update: async (id, patch) => {
     if(!DB.clients[id]) return null;
     Object.assign(DB.clients[id], patch, { updatedAt: nowIso() });
-    await saveDB();
+    await sbUpsert('clients', rowConverters.clients.toRow(DB.clients[id]));
     return DB.clients[id];
   },
   archive: async (id) => {
     if(!DB.clients[id]) return null;
-    Object.assign(DB.clients[id], { archived:true, archivedAt: nowIso() });
-    await saveDB();
+    Object.assign(DB.clients[id], { archived:true, archivedAt: nowIso(), updatedAt: nowIso() });
+    await sbUpsert('clients', rowConverters.clients.toRow(DB.clients[id]));
     return DB.clients[id];
   },
 };
@@ -1269,32 +1280,32 @@ const staffRepository = {
   create: async (data) => {
     const id = uid();
     DB.staff[id] = { id, status:'invited', passwordSet:false, password:null, invitedAt: nowIso(), activatedAt:null, lastLogin:null, ...data };
-    await saveDB();
+    await sbUpsert('staff', rowConverters.staff.toRow(DB.staff[id]));
     return DB.staff[id];
   },
   update: async (id, patch) => {
     if(!DB.staff[id]) return null;
     Object.assign(DB.staff[id], patch);
-    await saveDB();
+    await sbUpsert('staff', rowConverters.staff.toRow(DB.staff[id]));
     return DB.staff[id];
   },
   delete: async (id) => {
     delete DB.staff[id];
-    await saveDB();
+    await sbDelete('staff', id);
   },
 };
 
 const referralRepository = {
   getByCode: (code) => DB.referralCodes[code] || null,
   create: async (code, ownerId) => {
-    DB.referralCodes[code] = { ownerId, used:false, createdAt: nowIso() };
-    await saveDB();
+    DB.referralCodes[code] = { code, ownerId, used:false, createdAt: nowIso() };
+    await sbUpsert('referral_codes', rowConverters.referral_codes.toRow(DB.referralCodes[code]));
   },
   markUsed: async (code, usedByClientId, usedByName) => {
     const rc = DB.referralCodes[code];
     if(!rc) return null;
     Object.assign(rc, { used:true, usedAt: nowIso(), usedByClientId, usedByName });
-    await saveDB();
+    await sbUpsert('referral_codes', rowConverters.referral_codes.toRow(rc));
     return rc;
   },
 };
@@ -1339,29 +1350,23 @@ function emptyChecklistChecks(){
 const checklistRepository = {
   getAll: () => Object.values(DB.checklists),
   getById: (id) => DB.checklists[id] || null,
-  // El id es siempre staffId+fecha (no al azar) — así, aunque la misma
-  // persona lo toque desde dos dispositivos distintos casi a la vez,
-  // el sistema los reconoce como el MISMO registro y nunca se duplica.
-  idFor: (staffId, date) => `${staffId}__${date}`,
-  getByStaffDate: (staffId, date) => {
-    const byId = DB.checklists[checklistRepository.idFor(staffId, date)];
-    if(byId) return byId;
-    // Respaldo por si quedó algún registro viejo sin migrar todavía.
-    return Object.values(DB.checklists).find(r=>r.staffId===staffId && r.date===date) || null;
-  },
+  // Ya no hace falta un id "armado a mano" — la tabla tiene una restricción
+  // única por persona+fecha, así que la base de datos misma evita que se
+  // dupliquen los registros, aunque se toque desde dos dispositivos a la vez.
+  getByStaffDate: (staffId, date) => Object.values(DB.checklists).find(r=>r.staffId===staffId && r.date===date) || null,
   getByDate: (date) => Object.values(DB.checklists).filter(r=>r.date===date),
   ensure: async (staffId, staffName, date) => {
-    const id = checklistRepository.idFor(staffId, date);
-    let record = DB.checklists[id];
+    let record = checklistRepository.getByStaffDate(staffId, date);
     if(record) return record;
+    const id = uid();
     DB.checklists[id] = { id, staffId, staffName, date, checks: emptyChecklistChecks(), reflexion:'', createdAt: nowIso(), updatedAt: nowIso() };
-    await saveDB();
+    await sbUpsert('checklists', rowConverters.checklists.toRow(DB.checklists[id]));
     return DB.checklists[id];
   },
   update: async (id, patch) => {
     if(!DB.checklists[id]) return null;
     Object.assign(DB.checklists[id], patch, { updatedAt: nowIso() });
-    await saveDB();
+    await sbUpsert('checklists', rowConverters.checklists.toRow(DB.checklists[id]));
     return DB.checklists[id];
   },
 };
@@ -1386,20 +1391,21 @@ const treatmentCatalogRepository = {
   getById: (id) => DB.treatmentCatalog[id] || null,
   create: async (data) => {
     const id = uid();
-    DB.treatmentCatalog[id] = { id, status:'active', createdAt: nowIso(), ...data };
-    await saveDB();
+    DB.treatmentCatalog[id] = { id, status:'active', createdAt: nowIso(), updatedAt: nowIso(), ...data };
+    await sbUpsert('treatment_catalog', rowConverters.treatment_catalog.toRow(DB.treatmentCatalog[id]));
     return DB.treatmentCatalog[id];
   },
   update: async (id, patch) => {
     if(!DB.treatmentCatalog[id]) return null;
-    Object.assign(DB.treatmentCatalog[id], patch);
-    await saveDB();
+    Object.assign(DB.treatmentCatalog[id], patch, { updatedAt: nowIso() });
+    await sbUpsert('treatment_catalog', rowConverters.treatment_catalog.toRow(DB.treatmentCatalog[id]));
     return DB.treatmentCatalog[id];
   },
   archive: async (id) => {
     if(!DB.treatmentCatalog[id]) return null;
     DB.treatmentCatalog[id].status = 'archived';
-    await saveDB();
+    DB.treatmentCatalog[id].updatedAt = nowIso();
+    await sbUpsert('treatment_catalog', rowConverters.treatment_catalog.toRow(DB.treatmentCatalog[id]));
   },
 };
 
@@ -1410,12 +1416,12 @@ const expenseRepository = {
   create: async (data) => {
     const id = uid();
     DB.expenses[id] = { id, createdAt: nowIso(), ...data };
-    await saveDB();
+    await sbUpsert('expenses', rowConverters.expenses.toRow(DB.expenses[id]));
     return DB.expenses[id];
   },
   delete: async (id) => {
     delete DB.expenses[id];
-    await saveDB();
+    await sbDelete('expenses', id);
   },
 };
 
@@ -1425,23 +1431,22 @@ const bannerRepository = {
   getById: (id) => DB.banners[id] || null,
   create: async (data) => {
     const id = uid();
-    DB.banners[id] = { id, active:true, createdAt: nowIso(), ...data };
-    await saveDB();
+    DB.banners[id] = { id, active:true, createdAt: nowIso(), updatedAt: nowIso(), ...data };
+    await sbUpsert('banners', rowConverters.banners.toRow(DB.banners[id]));
     return DB.banners[id];
   },
   update: async (id, patch) => {
     if(!DB.banners[id]) return null;
-    Object.assign(DB.banners[id], patch);
-    await saveDB();
+    Object.assign(DB.banners[id], patch, { updatedAt: nowIso() });
+    await sbUpsert('banners', rowConverters.banners.toRow(DB.banners[id]));
     return DB.banners[id];
   },
   delete: async (id) => {
     delete DB.banners[id];
-    await saveDB();
+    await sbDelete('banners', id);
   },
 };
 
-const MAX_ACTIVE_DIAGNOSES = 3;
 const diagnosisRepository = {
   getAll: () => Object.values(DB.diagnoses),
   getById: (id) => DB.diagnoses[id] || null,
@@ -1459,38 +1464,42 @@ const diagnosisRepository = {
       const oldest = [...active].sort((a,b)=> new Date(a.date)-new Date(b.date))[0];
       oldest.status = 'archived';
       oldest.archivedAt = nowIso();
+      oldest.updatedAt = nowIso();
       autoArchived = oldest;
+      await sbUpsert('diagnoses', rowConverters.diagnoses.toRow(oldest));
     }
     const id = uid();
-    DB.diagnoses[id] = { id, status:'active', createdAt: nowIso(), archivedAt:null, photos:[], ...data };
-    await saveDB();
+    DB.diagnoses[id] = { id, status:'active', createdAt: nowIso(), updatedAt: nowIso(), archivedAt:null, photos:[], ...data };
+    await sbUpsert('diagnoses', rowConverters.diagnoses.toRow(DB.diagnoses[id]));
     return { diagnosis: DB.diagnoses[id], autoArchived };
   },
   update: async (id, patch) => {
     if(!DB.diagnoses[id]) return null;
     Object.assign(DB.diagnoses[id], patch, { updatedAt: nowIso() });
-    await saveDB();
+    await sbUpsert('diagnoses', rowConverters.diagnoses.toRow(DB.diagnoses[id]));
     return DB.diagnoses[id];
   },
   archive: async (id) => {
     if(!DB.diagnoses[id]) return null;
     DB.diagnoses[id].status = 'archived';
     DB.diagnoses[id].archivedAt = nowIso();
-    await saveDB();
+    DB.diagnoses[id].updatedAt = nowIso();
+    await sbUpsert('diagnoses', rowConverters.diagnoses.toRow(DB.diagnoses[id]));
     return DB.diagnoses[id];
   },
   unarchive: async (id) => {
     if(!DB.diagnoses[id]) return null;
     DB.diagnoses[id].status = 'active';
     DB.diagnoses[id].archivedAt = null;
-    await saveDB();
+    DB.diagnoses[id].updatedAt = nowIso();
+    await sbUpsert('diagnoses', rowConverters.diagnoses.toRow(DB.diagnoses[id]));
     return DB.diagnoses[id];
   },
   // Borrado real y definitivo — a diferencia de archive(), esto no tiene
   // vuelta atrás. Solo se dispara a mano desde Configuración, nunca automático.
   delete: async (id) => {
     delete DB.diagnoses[id];
-    await saveDB();
+    await sbDelete('diagnoses', id);
   },
 };
 
@@ -1527,14 +1536,14 @@ const appointmentRepository = {
   },
   create: async (data) => {
     const id = uid();
-    DB.appointments[id] = { id, status:'pending', createdAt: nowIso(), ...data };
-    await saveDB();
+    DB.appointments[id] = { id, status:'pending', createdAt: nowIso(), updatedAt: nowIso(), ...data };
+    await sbUpsert('appointments', rowConverters.appointments.toRow(DB.appointments[id]));
     return DB.appointments[id];
   },
   update: async (id, patch) => {
     if(!DB.appointments[id]) return null;
     Object.assign(DB.appointments[id], patch, { updatedAt: nowIso() });
-    await saveDB();
+    await sbUpsert('appointments', rowConverters.appointments.toRow(DB.appointments[id]));
     return DB.appointments[id];
   },
   getOverdueUnresolved: () => Object.values(DB.appointments).filter(a=>a.status==='overdue'),
@@ -1553,26 +1562,32 @@ async function checkOverdueAppointments(){
       const threshold = new Date(end.getTime() + 60*60000);
       if(now > threshold){
         a.status = 'overdue';
+        a.updatedAt = nowIso();
         changed = true;
+        await sbUpsert('appointments', rowConverters.appointments.toRow(a));
         const c = clientRepository.getById(a.clientId);
         await auditRepository.log('appointment.overdue', {entity:'appointments', entityId:a.id, description:`Turno de ${c?c.name:''} quedó sin resolver (pasó la hora + 1h sin marcar asistencia)`, branch:a.sucursal});
       }
     }
   }
-  if(changed){ await saveDB(); render(); }
+  if(changed){ render(); }
 }
 
 const auditRepository = {
   log: async (action, {entity, entityId, description, branch} = {}) => {
     const staff = currentStaff();
-    DB.auditLog.unshift({
+    const entry = {
       id: uid(), at: nowIso(),
       userId: staff ? staff.id : null, userName: staff ? staff.name : 'Sistema', role: staff ? staff.role : null,
       action, entity: entity||null, entityId: entityId||null, description: description||'',
       branch: branch || (staff ? staff.branch : null), // sucursal a la que pertenece la actividad
-    });
+    };
+    DB.auditLog.unshift(entry);
     if(DB.auditLog.length > 300) DB.auditLog.length = 300; // tope simple para no crecer sin límite en esta beta
-    await saveDB();
+    await sbUpsert('audit_log', {
+      id: entry.id, at: entry.at, user_id: entry.userId, user_name: entry.userName, role: entry.role,
+      action: entry.action, entity: entry.entity, entity_id: entry.entityId, description: entry.description, branch: entry.branch,
+    });
   },
   getRecent: (limit=20) => {
     const scope = effectiveBranchFilter();
@@ -3321,8 +3336,7 @@ function configTabDemo(){
   return `
   <div class="glass panel">
     <div class="panel-head"><div class="panel-title">Datos de demostración</div></div>
-    <p style="color:var(--text-secondary); font-size:14px; margin-bottom:14px;">Borra todo lo cargado (clientas, tratamientos, equipo) y vuelve a dejar la app con los datos de prueba originales. Esta acción no se puede deshacer.</p>
-    <button class="btn btn-secondary" data-action="openModal" data-modal="confirmResetDemo">${Icon('refresh')} Restablecer datos de demostración</button>
+    <p style="color:var(--text-secondary); font-size:14px; margin-bottom:14px;">Esta opción está desactivada — el sistema ya tiene datos reales cargados, y "restablecer" borraría todo lo real (clientas, turnos, diagnósticos) sin posibilidad de deshacerlo.</p>
   </div>`;
 }
 
@@ -3342,7 +3356,7 @@ const settingsRepository = {
   get: () => DB.settings,
   update: async (patch) => {
     Object.assign(DB.settings, patch, { updatedAt: nowIso() });
-    await saveDB();
+    await sbUpsert('settings', rowConverters.settings.toRow(DB.settings));
     return DB.settings;
   },
 };
@@ -6114,15 +6128,12 @@ async function doResetStaffAccess(id){
 }
 
 async function doResetDemoData(){
-  DB = defaultDB();
-  seedDemoData();
-  DB.seeded = true;
-  await saveDB();
+  // Desactivado a propósito: con datos reales cargados, esto podría borrar
+  // todo sin posibilidad de deshacerlo. Ya no se puede disparar desde
+  // ningún lado de la interfaz.
+  showToast('Esta función está desactivada.');
   state.modal = null;
-  state.staffSession = null;
-  state.clientSession = null;
-  showToast('Datos de demostración restablecidos');
-  goAdmin();
+  render();
 }
 
 async function doSaveTreatmentCatalogItem(id){
@@ -6241,15 +6252,25 @@ async function doAddBranch(){
 // Actualiza el nombre de la sucursal en todos los lugares donde ya está cargada
 // (clientas, tratamientos, staff, turnos, gastos, diagnósticos) — a diferencia
 // de otros "eliminar" del sistema, acá sí conviene mantener todo consistente.
-function cascadeRenameBranch(oldName, newName){
-  Object.values(DB.clients).forEach(c => {
-    if(c.sucursal===oldName) c.sucursal = newName;
-    (c.treatments||[]).forEach(t => { if(t.sucursal===oldName) t.sucursal = newName; });
-  });
-  Object.values(DB.staff).forEach(s => { if(s.branch===oldName) s.branch = newName; });
-  Object.values(DB.appointments).forEach(a => { if(a.sucursal===oldName) a.sucursal = newName; });
-  Object.values(DB.expenses).forEach(e => { if(e.sucursal===oldName) e.sucursal = newName; });
-  Object.values(DB.diagnoses).forEach(d => { if(d.sucursal===oldName) d.sucursal = newName; });
+async function cascadeRenameBranch(oldName, newName){
+  for(const c of Object.values(DB.clients)){
+    let touched = false;
+    if(c.sucursal===oldName){ c.sucursal = newName; touched = true; }
+    (c.treatments||[]).forEach(t => { if(t.sucursal===oldName){ t.sucursal = newName; touched = true; } });
+    if(touched){ c.updatedAt = nowIso(); await sbUpsert('clients', rowConverters.clients.toRow(c)); }
+  }
+  for(const s of Object.values(DB.staff)){
+    if(s.branch===oldName){ s.branch = newName; await sbUpsert('staff', rowConverters.staff.toRow(s)); }
+  }
+  for(const a of Object.values(DB.appointments)){
+    if(a.sucursal===oldName){ a.sucursal = newName; a.updatedAt = nowIso(); await sbUpsert('appointments', rowConverters.appointments.toRow(a)); }
+  }
+  for(const e of Object.values(DB.expenses)){
+    if(e.sucursal===oldName){ e.sucursal = newName; await sbUpsert('expenses', rowConverters.expenses.toRow(e)); }
+  }
+  for(const d of Object.values(DB.diagnoses)){
+    if(d.sucursal===oldName){ d.sucursal = newName; d.updatedAt = nowIso(); await sbUpsert('diagnoses', rowConverters.diagnoses.toRow(d)); }
+  }
   if(state.branchFilter===oldName) state.branchFilter = newName;
 }
 
@@ -6259,7 +6280,7 @@ async function doRenameBranch(oldName){
   if(!newName){ state.errors.branch = 'Ponele un nombre a la sucursal.'; render(); return; }
   if(newName !== oldName && getBranches().includes(newName)){ state.errors.branch = 'Ya existe una sucursal con ese nombre.'; render(); return; }
   const branches = getBranches().map(b => b===oldName ? newName : b);
-  cascadeRenameBranch(oldName, newName);
+  await cascadeRenameBranch(oldName, newName);
   await settingsRepository.update({ branches });
   await auditRepository.log('settings.branch_rename', {entity:'settings', description:`Sucursal "${oldName}" renombrada a "${newName}"`});
   state.errors.branch = null;
@@ -6451,27 +6472,21 @@ setInterval(() => { checkOverdueAppointments(); }, 60000);
 // persona y las trae — sin que nadie tenga que recargar la página. No
 // interrumpe si hay un formulario abierto, para no perder lo que se está
 // escribiendo en el medio.
-// Guardamos la última vez que sabemos que se guardó algo — así podemos
-// preguntar "¿cambió desde entonces?" de forma barata, sin traer todo el
-// paquete de datos cada vez.
+// Auto-refresh: cada tanto, revisa sola si hay novedades cargadas por otra
+// persona y las trae — sin que nadie tenga que recargar la página. No
+// interrumpe si hay un formulario abierto, para no perder lo que se está
+// escribiendo en el medio. Ahora cada tabla es chica y liviana, así que
+// no hace falta el paso extra de "preguntar barato antes" como con el
+// paquete único de antes — directamente se trae todo de nuevo.
 async function pollForUpdates(){
   if(!supabaseClient) return;
   if(state.modal) return;
   if(!state.staffSession && !state.clientSession) return;
   if(document.visibilityState !== 'visible') return; // pestaña en segundo plano — no gastar de más
   try{
-    const { data: ts, error: tsError } = await withTimeout(supabaseClient.rpc('get_app_data_timestamp', { secret: APP_SECRET }), 10000);
-    if(tsError) return;
-    if(lastKnownDataTimestamp && ts && new Date(ts).getTime() <= new Date(lastKnownDataTimestamp).getTime()){
-      return; // nada cambió desde la última vez — no hace falta traer todo el paquete
-    }
-    const { data: serverData, error } = await withTimeout(supabaseClient.rpc('get_app_data', { secret: APP_SECRET }), 10000);
-    if(error || !serverData || !Object.keys(serverData).length) return;
-    lastKnownDataTimestamp = ts || new Date().toISOString();
     const before = JSON.stringify(DB);
-    DB = mergeDB(serverData, DB);
+    await loadDB();
     if(JSON.stringify(DB) !== before){
-      try{ localStorage.setItem(DB_KEY, JSON.stringify(DB)); }catch(e){}
       render();
     }
   }catch(e){
