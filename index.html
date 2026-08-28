@@ -1051,12 +1051,22 @@ function mergeDB(serverDB, localDB){
   return merged;
 }
 
+// Si Supabase tarda demasiado en responder (por una falla o lentitud de
+// su lado), esto evita que la página quede esperando para siempre — a
+// los 10 segundos, sigue de largo y usa el respaldo del dispositivo.
+function withTimeout(promise, ms){
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error('Se agotó el tiempo de espera')), ms)),
+  ]);
+}
+
 async function loadDB(){
   let loaded = null;
   let loadedFromServer = false;
   if(supabaseClient){
     try{
-      const { data, error } = await supabaseClient.rpc('get_app_data', { secret: APP_SECRET });
+      const { data, error } = await withTimeout(supabaseClient.rpc('get_app_data', { secret: APP_SECRET }), 10000);
       if(!error && data && Object.keys(data).length){
         loaded = data;
         loadedFromServer = true;
@@ -1099,11 +1109,11 @@ async function saveDB(){
       // Antes de escribir, traemos la última versión de la nube y la
       // combinamos con nuestro cambio — así nunca pisamos algo que
       // otra persona acaba de guardar en otro registro.
-      const { data: serverData, error: fetchError } = await supabaseClient.rpc('get_app_data', { secret: APP_SECRET });
+      const { data: serverData, error: fetchError } = await withTimeout(supabaseClient.rpc('get_app_data', { secret: APP_SECRET }), 15000);
       if(!fetchError && serverData){
         DB = mergeDB(serverData, DB);
       }
-      const { error } = await supabaseClient.rpc('save_app_data', { secret: APP_SECRET, new_data: DB });
+      const { error } = await withTimeout(supabaseClient.rpc('save_app_data', { secret: APP_SECRET, new_data: DB }), 15000);
       if(error){
         console.error('Error guardando en Supabase', error);
         showToast('No se pudo guardar en la nube — revisá tu conexión a internet.');
@@ -6340,12 +6350,12 @@ async function pollForUpdates(){
   if(state.modal) return;
   if(!state.staffSession && !state.clientSession) return;
   try{
-    const { data: ts, error: tsError } = await supabaseClient.rpc('get_app_data_timestamp', { secret: APP_SECRET });
+    const { data: ts, error: tsError } = await withTimeout(supabaseClient.rpc('get_app_data_timestamp', { secret: APP_SECRET }), 10000);
     if(tsError) return;
     if(lastKnownDataTimestamp && ts && new Date(ts).getTime() <= new Date(lastKnownDataTimestamp).getTime()){
       return; // nada cambió desde la última vez — no hace falta traer todo el paquete
     }
-    const { data: serverData, error } = await supabaseClient.rpc('get_app_data', { secret: APP_SECRET });
+    const { data: serverData, error } = await withTimeout(supabaseClient.rpc('get_app_data', { secret: APP_SECRET }), 10000);
     if(error || !serverData || !Object.keys(serverData).length) return;
     lastKnownDataTimestamp = ts || new Date().toISOString();
     const before = JSON.stringify(DB);
