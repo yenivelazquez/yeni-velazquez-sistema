@@ -1153,7 +1153,11 @@ async function loadDB(){
       if(new Date(r.updatedAt||0) > new Date(existing.updatedAt||0)) existing.updatedAt = r.updatedAt;
     }
   });
-  if(hadDuplicates){
+  // Aplicamos la migración siempre (no solo cuando hay duplicados) — así
+  // los registros que tenían un identificador viejo (al azar) también
+  // quedan con el nuevo formato fijo, y se pueden encontrar bien.
+  const changedAnyId = Object.keys(consolidated).some(id => !DB.checklists[id]) || Object.keys(DB.checklists).length !== Object.keys(consolidated).length;
+  if(hadDuplicates || changedAnyId){
     DB.checklists = consolidated;
     needsSave = true;
   }
@@ -1339,7 +1343,12 @@ const checklistRepository = {
   // persona lo toque desde dos dispositivos distintos casi a la vez,
   // el sistema los reconoce como el MISMO registro y nunca se duplica.
   idFor: (staffId, date) => `${staffId}__${date}`,
-  getByStaffDate: (staffId, date) => DB.checklists[checklistRepository.idFor(staffId, date)] || null,
+  getByStaffDate: (staffId, date) => {
+    const byId = DB.checklists[checklistRepository.idFor(staffId, date)];
+    if(byId) return byId;
+    // Respaldo por si quedó algún registro viejo sin migrar todavía.
+    return Object.values(DB.checklists).find(r=>r.staffId===staffId && r.date===date) || null;
+  },
   getByDate: (date) => Object.values(DB.checklists).filter(r=>r.date===date),
   ensure: async (staffId, staffName, date) => {
     const id = checklistRepository.idFor(staffId, date);
