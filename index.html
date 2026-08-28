@@ -1035,13 +1035,41 @@ function mergeByUpdatedAt(s, l){
   const lTime = new Date(l.updatedAt || 0).getTime();
   return lTime >= sTime ? l : s;
 }
+// Los checklists se mezclan distinto al resto: en vez de "gana la versión
+// más nueva entera" (que podía llegar a borrar tildes ya puestos por otro
+// dispositivo), acá COMBINAMOS los casilleros de las dos versiones — un
+// casillero tildado nunca se "destilda" solo al mezclar.
+function mergeChecklistsCollection(serverColl, localColl){
+  const merged = {};
+  const allIds = new Set([...Object.keys(serverColl||{}), ...Object.keys(localColl||{})]);
+  allIds.forEach(id => {
+    const s = serverColl ? serverColl[id] : undefined;
+    const l = localColl ? localColl[id] : undefined;
+    if(s && !l) merged[id] = s;
+    else if(l && !s) merged[id] = l;
+    else {
+      const base = (new Date(l.updatedAt||0) >= new Date(s.updatedAt||0)) ? l : s;
+      const other = base === l ? s : l;
+      const mergedChecks = {};
+      CHECKLIST_SECTIONS.forEach(sec => {
+        const a = (base.checks && base.checks[sec.id]) || [];
+        const b = (other.checks && other.checks[sec.id]) || [];
+        mergedChecks[sec.id] = a.map((v,i) => v || !!b[i]);
+      });
+      merged[id] = { ...base, checks: mergedChecks, reflexion: base.reflexion || other.reflexion };
+    }
+  });
+  return merged;
+}
+
 function mergeDB(serverDB, localDB){
   if(!serverDB || !Object.keys(serverDB).length) return localDB;
   if(!localDB) return serverDB;
   const merged = { ...serverDB, ...localDB };
-  ['clients','staff','diagnoses','appointments','treatmentCatalog','expenses','banners','checklists','referralCodes'].forEach(key => {
+  ['clients','staff','diagnoses','appointments','treatmentCatalog','expenses','banners','referralCodes'].forEach(key => {
     merged[key] = mergeCollectionById(serverDB[key], localDB[key]);
   });
+  merged.checklists = mergeChecklistsCollection(serverDB.checklists, localDB.checklists);
   merged.benefitTypes = mergeArrayById(serverDB.benefitTypes, localDB.benefitTypes);
   merged.settings = mergeByUpdatedAt(serverDB.settings, localDB.settings) || localDB.settings || serverDB.settings;
   const mergedAudit = mergeArrayById(serverDB.auditLog, localDB.auditLog);
@@ -1101,6 +1129,34 @@ async function loadDB(){
   if(!DB.settings) { DB.settings = defaultDB().settings; needsSave = true; }
   if(!DB.settings.branches || !DB.settings.branches.length) { DB.settings.branches = ['Sucursal Centro','Sucursal Norte']; needsSave = true; }
   if(!DB.seeded){ seedDemoData(); DB.seeded = true; needsSave = true; }
+
+  // Limpieza: si quedaron checklists duplicados de antes de este arreglo
+  // (misma persona, mismo día, pero con ids al azar distintos por haberse
+  // creado desde dos dispositivos casi a la vez), los combinamos en uno
+  // solo — nos quedamos con todos los casilleros que estén tildados en
+  // cualquiera de las copias.
+  const consolidated = {};
+  let hadDuplicates = false;
+  Object.values(DB.checklists).forEach(r => {
+    const canonicalId = checklistRepository.idFor(r.staffId, r.date);
+    if(!consolidated[canonicalId]){
+      consolidated[canonicalId] = { ...r, id: canonicalId, checks: JSON.parse(JSON.stringify(r.checks||{})) };
+    } else {
+      hadDuplicates = true;
+      const existing = consolidated[canonicalId];
+      CHECKLIST_SECTIONS.forEach(sec => {
+        const a = existing.checks[sec.id] || [];
+        const b = (r.checks && r.checks[sec.id]) || [];
+        existing.checks[sec.id] = a.map((v,i) => v || !!b[i]);
+      });
+      if(!existing.reflexion && r.reflexion) existing.reflexion = r.reflexion;
+      if(new Date(r.updatedAt||0) > new Date(existing.updatedAt||0)) existing.updatedAt = r.updatedAt;
+    }
+  });
+  if(hadDuplicates){
+    DB.checklists = consolidated;
+    needsSave = true;
+  }
   if(needsSave) await saveDB();
 }
 async function saveDB(){
@@ -1279,12 +1335,16 @@ function emptyChecklistChecks(){
 const checklistRepository = {
   getAll: () => Object.values(DB.checklists),
   getById: (id) => DB.checklists[id] || null,
-  getByStaffDate: (staffId, date) => Object.values(DB.checklists).find(r=>r.staffId===staffId && r.date===date) || null,
+  // El id es siempre staffId+fecha (no al azar) — así, aunque la misma
+  // persona lo toque desde dos dispositivos distintos casi a la vez,
+  // el sistema los reconoce como el MISMO registro y nunca se duplica.
+  idFor: (staffId, date) => `${staffId}__${date}`,
+  getByStaffDate: (staffId, date) => DB.checklists[checklistRepository.idFor(staffId, date)] || null,
   getByDate: (date) => Object.values(DB.checklists).filter(r=>r.date===date),
   ensure: async (staffId, staffName, date) => {
-    let record = checklistRepository.getByStaffDate(staffId, date);
+    const id = checklistRepository.idFor(staffId, date);
+    let record = DB.checklists[id];
     if(record) return record;
-    const id = uid();
     DB.checklists[id] = { id, staffId, staffName, date, checks: emptyChecklistChecks(), reflexion:'', createdAt: nowIso(), updatedAt: nowIso() };
     await saveDB();
     return DB.checklists[id];
@@ -3026,7 +3086,7 @@ function renderChecklistTeamPanel(staffList){
       const complete = progress.total>0 && progress.done===progress.total;
       const started = record && progress.done>0;
       return `
-      <div class="catalog-row" style="align-items:flex-start;">
+      <div class="catalog-row" style="align-items:flex-start; cursor:pointer;" data-action="openModal" data-modal="viewStaffChecklist" data-staffid="${s.id}" data-date="${date}">
         <div class="avatar">${initials(s.name)}</div>
         <div class="catalog-row-name" style="display:flex; flex-direction:column; gap:4px;">
           <span>${s.name}</span>
@@ -3566,6 +3626,7 @@ function renderModal(){
   else if(m.type==='newTreatmentCatalogItem' || m.type==='editTreatmentCatalogItem') inner = modalTreatmentCatalogForm(m);
   else if(m.type==='confirmDeleteTreatmentCatalogItem') inner = modalConfirmDeleteTreatmentCatalogItem(m);
   else if(m.type==='confirmDeleteClient') inner = modalConfirmDeleteClient(m);
+  else if(m.type==='viewStaffChecklist') inner = modalViewStaffChecklist(m);
   else if(m.type==='newExpense') inner = modalNewExpense(m);
   else if(m.type==='newBanner') inner = modalNewBanner(m);
   else if(m.type==='renameBranch') inner = modalRenameBranch(m);
@@ -4403,6 +4464,43 @@ function modalNewExpense(){
   `}
   ${state.errors.expense ? `<div style="color:#DC2626; font-size:13px; margin:8px 0;">${state.errors.expense}</div>`:''}
   <button class="btn btn-primary btn-block" style="margin-top:14px;" data-action="submitExpense">Guardar gasto</button>
+  `;
+}
+
+function modalViewStaffChecklist(m){
+  const staff = staffRepository.getById(m.payload.staffid);
+  const date = m.payload.date;
+  if(!staff) return `<p>Empleada no encontrada.</p>`;
+  const record = checklistRepository.getByStaffDate(staff.id, date);
+  const checks = record ? record.checks : emptyChecklistChecks();
+  const progress = checklistProgress(record);
+  const dateObj = new Date(date+'T00:00:00');
+  const dayLabel = dateObj.toLocaleDateString('es-AR', {weekday:'long', day:'numeric', month:'long'});
+
+  return `
+  <div class="modal-head"><h2>${staff.name}</h2><button class="close-btn" data-action="closeModal">${Icon('x')}</button></div>
+  <p style="color:var(--text-secondary); font-size:13px; margin:-10px 0 16px;">${dayLabel} · ${progress.done}/${progress.total} completado${progress.done===1?'':'s'}</p>
+
+  <div class="turnos-list-scroll" style="max-height:60vh;">
+    ${CHECKLIST_SECTIONS.map(sec => `
+      <div class="checklist-section">
+        <div class="checklist-section-title" style="font-size:14px;">${sec.title}</div>
+        ${sec.items.map((text, idx) => {
+          const isChecked = !!(checks[sec.id] && checks[sec.id][idx]);
+          return `
+          <div class="checklist-item readonly ${isChecked?'checked':''}" style="cursor:default;">
+            <div class="checklist-checkbox">${Icon('check')}</div>
+            <div class="checklist-item-text">${text}</div>
+          </div>`;
+        }).join('')}
+      </div>
+    `).join('')}
+    ${record && record.reflexion ? `
+      <div class="checklist-section">
+        <div class="checklist-section-title" style="font-size:14px;">Reflexión de la jornada</div>
+        <p style="font-size:13.5px; color:var(--text-secondary); font-style:italic;">"${record.reflexion}"</p>
+      </div>` : ''}
+  </div>
   `;
 }
 
