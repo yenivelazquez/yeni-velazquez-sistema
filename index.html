@@ -6349,6 +6349,7 @@ async function pollForUpdates(){
   if(!supabaseClient) return;
   if(state.modal) return;
   if(!state.staffSession && !state.clientSession) return;
+  if(document.visibilityState !== 'visible') return; // pestaña en segundo plano — no gastar de más
   try{
     const { data: ts, error: tsError } = await withTimeout(supabaseClient.rpc('get_app_data_timestamp', { secret: APP_SECRET }), 10000);
     if(tsError) return;
@@ -6369,6 +6370,9 @@ async function pollForUpdates(){
   }
 }
 setInterval(pollForUpdates, 15000);
+document.addEventListener('visibilitychange', () => {
+  if(document.visibilityState === 'visible') pollForUpdates();
+});
 setInterval(() => {
   if(state.clientSession && state.clientView==='inicio'){
     const activeBanners = bannerRepository.getActive();
