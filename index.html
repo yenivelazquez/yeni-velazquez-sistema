@@ -1826,6 +1826,7 @@ const state = {
   diagFormDraft: null,
   authLoading: false,
   diagSaving: false,
+  creatingClient: false,
 };
 
 function setState(patch){ Object.assign(state, patch); render(); }
@@ -3599,7 +3600,7 @@ function modalCreateClient(){
   <input class="input" id="f_refcode" placeholder="Ej: YV-82XJ" style="margin-bottom:6px; text-transform:uppercase;">
   <p style="color:var(--text-secondary); font-size:12px; margin:8px 0 0;">No hace falta definir una contraseña acá: ella la va a elegir sola la primera vez que entre a su espacio.</p>
   ${state.errors.createClient ? `<div style="color:#DC2626; font-size:13px; margin:8px 0;">${state.errors.createClient}</div>`:''}
-  <button class="btn btn-primary btn-block" style="margin-top:14px;" data-action="submitCreateClient">Crear clienta</button>
+  <button class="btn btn-primary btn-block" style="margin-top:14px;" data-action="submitCreateClient" ${state.creatingClient?'disabled style="opacity:0.7; margin-top:14px;"':''}>${state.creatingClient?'Guardando…':'Crear clienta'}</button>
   `;
 }
 
@@ -5156,6 +5157,7 @@ function handleAction(action, el){
     state.diagPhotoDrafts = [];
     state.diagFormDraft = null;
     state.diagSaving = false;
+    state.creatingClient = false;
     state.apClientSearch = '';
     state.bannerImageDraft = null;
     if(modalType==='editAppointment' && id){
@@ -5191,7 +5193,7 @@ function handleAction(action, el){
   }
   else if(action==='submitScheduleVisit'){ doScheduleVisit(el.getAttribute('data-id')); }
   else if(action==='resetPassword'){ doResetPassword(el.getAttribute('data-id')); }
-  else if(action==='closeModal'){ state.diagFormDraft = null; state.diagSaving = false; setState({modal:null}); }
+  else if(action==='closeModal'){ state.diagFormDraft = null; state.diagSaving = false; state.creatingClient = false; setState({modal:null}); }
   else if(action==='closeModalBg'){ setState({modal:null}); }
   else if(action==='submitCreateClient'){ doCreateClient(); }
   else if(action==='submitProfileTreatment'){ doSaveProfileTreatment(el.getAttribute('data-id')); }
@@ -5518,6 +5520,7 @@ function attachBannerFileHandler(){
 function normalizePhone(p){ return (p||'').replace(/\D/g,''); }
 
 async function doCreateClient(){
+  if(state.creatingClient) return; // ya se está guardando — ignoramos el toque de más
   const firstName = document.getElementById('f_firstname').value.trim();
   const lastName = document.getElementById('f_lastname').value.trim();
   const name = `${firstName} ${lastName}`.trim();
@@ -5535,6 +5538,10 @@ async function doCreateClient(){
     if(!rc){ state.errors.createClient = 'Ese código de referido no existe.'; render(); return; }
     if(rc.used){ state.errors.createClient = 'Ese código ya fue usado.'; render(); return; }
   }
+
+  state.creatingClient = true;
+  state.errors.createClient = null;
+  render();
 
   const referralCode = genCode();
   const newClient = await clientRepository.create({
@@ -5558,6 +5565,7 @@ async function doCreateClient(){
 
   await auditRepository.log('client.create', {entity:'clients', entityId:newClient.id, description:`Clienta creada: ${name}`, branch:sucursal});
   state.errors.createClient = null;
+  state.creatingClient = false;
   state.modal = {type:'clientCreated', payload:{id:newClient.id, phone, name, referralCode}};
   render();
   if(ownerName) showToast(`${ownerName} se ganó el Kit Bienvenida`);
