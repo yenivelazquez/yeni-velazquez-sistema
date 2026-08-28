@@ -1020,10 +1020,15 @@ function withTimeout(promise, ms){
 }
 
 async function sbSelectAll(table){
-  if(!supabaseClient) return [];
-  const { data, error } = await withTimeout(supabaseClient.rpc('secure_select_all', { secret: APP_SECRET, tbl: table }), 15000);
-  if(error){ console.error(`Error trayendo ${table}`, error); return []; }
-  return data || [];
+  if(!supabaseClient) return null;
+  try{
+    const { data, error } = await withTimeout(supabaseClient.rpc('secure_select_all', { secret: APP_SECRET, tbl: table }), 15000);
+    if(error){ console.error(`Error trayendo ${table}`, error); return null; } // null = falló, no "está vacía"
+    return data || [];
+  }catch(e){
+    console.error(`Error de red trayendo ${table}`, e);
+    return null;
+  }
 }
 async function sbUpsert(table, rowData){
   if(!supabaseClient) return;
@@ -1133,14 +1138,16 @@ const rowConverters = {
       hours:s.hours||null, updated_at:s.updatedAt }),
   },
 };
-
 async function loadDB(){
-  DB = defaultDB();
+  const prev = DB; // por si alguna tabla puntual falla al traer, no perdemos lo que ya había en memoria
   if(!supabaseClient){
-    try{
-      const raw = localStorage.getItem(DB_KEY);
-      if(raw) DB = JSON.parse(raw);
-    }catch(e){ console.error('No se pudo leer el respaldo local', e); }
+    if(!DB){
+      DB = defaultDB();
+      try{
+        const raw = localStorage.getItem(DB_KEY);
+        if(raw) DB = JSON.parse(raw);
+      }catch(e){ console.error('No se pudo leer el respaldo local', e); }
+    }
     return;
   }
   try{
@@ -1150,37 +1157,51 @@ async function loadDB(){
       sbSelectAll('checklists'), sbSelectAll('benefit_types'), sbSelectAll('settings'), sbSelectAll('audit_log'),
     ]);
 
-    DB.clients = {}; clientsRows.forEach(r => { const c = rowConverters.clients.fromRow(r); DB.clients[c.id] = c; });
-    DB.staff = {}; staffRows.forEach(r => { const s = rowConverters.staff.fromRow(r); DB.staff[s.id] = s; });
-    DB.referralCodes = {}; refRows.forEach(r => { const rc = rowConverters.referral_codes.fromRow(r); DB.referralCodes[rc.code] = rc; });
-    DB.diagnoses = {}; diagRows.forEach(r => { const d = rowConverters.diagnoses.fromRow(r); DB.diagnoses[d.id] = d; });
-    DB.appointments = {}; apptRows.forEach(r => { const a = rowConverters.appointments.fromRow(r); DB.appointments[a.id] = a; });
-    DB.treatmentCatalog = {}; catalogRows.forEach(r => { const t = rowConverters.treatment_catalog.fromRow(r); DB.treatmentCatalog[t.id] = t; });
-    DB.expenses = {}; expenseRows.forEach(r => { const e = rowConverters.expenses.fromRow(r); DB.expenses[e.id] = e; });
-    DB.banners = {}; bannerRows.forEach(r => { const b = rowConverters.banners.fromRow(r); DB.banners[b.id] = b; });
-    DB.checklists = {}; checklistRows.forEach(r => { const c = rowConverters.checklists.fromRow(r); DB.checklists[c.id] = c; });
-    DB.benefitTypes = benefitRows.map(r => rowConverters.benefit_types.fromRow(r));
-    if(settingsRows && settingsRows[0]) DB.settings = rowConverters.settings.fromRow(settingsRows[0]);
-    if(!DB.settings.branches || !DB.settings.branches.length) DB.settings.branches = ['Sucursal Centro','Sucursal Norte'];
-    DB.auditLog = auditRows
-      .map(a => ({ id:a.id, at:a.at, userId:a.user_id, userName:a.user_name, role:a.role, action:a.action,
-        entity:a.entity, entityId:a.entity_id, description:a.description, branch:a.branch }))
-      .sort((x,y)=> new Date(y.at) - new Date(x.at))
-      .slice(0, 300);
+    // "null" en cualquiera de estas listas significa que ESA tabla puntual
+    // falló al traer (no que esté vacía) — en ese caso mantenemos lo que
+    // ya había en memoria para esa tabla, en vez de vaciarla por un
+    // problema pasajero de conexión.
+    const next = { ...(prev || defaultDB()) };
 
-    // Si la base está totalmente vacía (instalación nueva, sin datos
-    // reales todavía), sembramos los datos de demostración de siempre.
-    DB.seeded = Object.keys(DB.staff).length > 0;
-    if(!DB.seeded){ await seedDemoData(); DB.seeded = true; }
+    if(clientsRows !== null){ next.clients = {}; clientsRows.forEach(r => { const c = rowConverters.clients.fromRow(r); next.clients[c.id] = c; }); }
+    if(staffRows !== null){ next.staff = {}; staffRows.forEach(r => { const s = rowConverters.staff.fromRow(r); next.staff[s.id] = s; }); }
+    if(refRows !== null){ next.referralCodes = {}; refRows.forEach(r => { const rc = rowConverters.referral_codes.fromRow(r); next.referralCodes[rc.code] = rc; }); }
+    if(diagRows !== null){ next.diagnoses = {}; diagRows.forEach(r => { const d = rowConverters.diagnoses.fromRow(r); next.diagnoses[d.id] = d; }); }
+    if(apptRows !== null){ next.appointments = {}; apptRows.forEach(r => { const a = rowConverters.appointments.fromRow(r); next.appointments[a.id] = a; }); }
+    if(catalogRows !== null){ next.treatmentCatalog = {}; catalogRows.forEach(r => { const t = rowConverters.treatment_catalog.fromRow(r); next.treatmentCatalog[t.id] = t; }); }
+    if(expenseRows !== null){ next.expenses = {}; expenseRows.forEach(r => { const e = rowConverters.expenses.fromRow(r); next.expenses[e.id] = e; }); }
+    if(bannerRows !== null){ next.banners = {}; bannerRows.forEach(r => { const b = rowConverters.banners.fromRow(r); next.banners[b.id] = b; }); }
+    if(checklistRows !== null){ next.checklists = {}; checklistRows.forEach(r => { const c = rowConverters.checklists.fromRow(r); next.checklists[c.id] = c; }); }
+    if(benefitRows !== null){ next.benefitTypes = benefitRows.map(r => rowConverters.benefit_types.fromRow(r)); }
+    if(settingsRows !== null && settingsRows[0]){ next.settings = rowConverters.settings.fromRow(settingsRows[0]); }
+    if(!next.settings.branches || !next.settings.branches.length) next.settings.branches = ['Sucursal Centro','Sucursal Norte'];
+    if(auditRows !== null){
+      next.auditLog = auditRows
+        .map(a => ({ id:a.id, at:a.at, userId:a.user_id, userName:a.user_name, role:a.role, action:a.action,
+          entity:a.entity, entityId:a.entity_id, description:a.description, branch:a.branch }))
+        .sort((x,y)=> new Date(y.at) - new Date(x.at))
+        .slice(0, 300);
+    }
+
+    DB = next;
+
+    // Solo sembramos datos de demostración si de verdad pudimos confirmar
+    // que la tabla de empleadas está vacía (no si falló la conexión).
+    if(staffRows !== null && Object.keys(DB.staff).length === 0 && !DB.seeded){
+      await seedDemoData();
+      DB.seeded = true;
+    }
 
     lastKnownDataTimestamp = new Date().toISOString();
     try{ localStorage.setItem(DB_KEY, JSON.stringify(DB)); }catch(e){ console.error('No se pudo guardar el respaldo local', e); }
   }catch(e){
     console.error('No se pudo conectar con Supabase, uso el respaldo local', e);
-    try{
-      const raw = localStorage.getItem(DB_KEY);
-      if(raw) DB = JSON.parse(raw);
-    }catch(e2){ console.error('No se pudo leer el respaldo local', e2); }
+    if(!DB){
+      try{
+        const raw = localStorage.getItem(DB_KEY);
+        DB = raw ? JSON.parse(raw) : defaultDB();
+      }catch(e2){ DB = defaultDB(); }
+    }
   }
 }
 
