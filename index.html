@@ -5260,6 +5260,8 @@ function handleAction(action, el){
     const clientid = el.getAttribute('data-clientid');
     const outcome = el.getAttribute('data-outcome');
     const branchname = el.getAttribute('data-branchname');
+    const staffid = el.getAttribute('data-staffid');
+    const dateAttr = el.getAttribute('data-date');
     const modalType = el.getAttribute('data-modal');
     state.errors={};
     state.diagPhotoDrafts = [];
@@ -5274,7 +5276,7 @@ function handleAction(action, el){
     } else {
       state.apSelectedClientId = clientid || null;
     }
-    setState({modal:{type: modalType, payload: (id || diagid || clientid || branchname) ? {id, diagid: diagid||null, clientId: clientid||null, outcome: outcome||null, branchName: branchname||null} : undefined}});
+    setState({modal:{type: modalType, payload: (id || diagid || clientid || branchname || staffid) ? {id, diagid: diagid||null, clientId: clientid||null, outcome: outcome||null, branchName: branchname||null, staffid: staffid||null, date: dateAttr||null} : undefined}});
   }
   else if(action==='openClientProfile'){
     state.errors={};
