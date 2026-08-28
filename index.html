@@ -6335,7 +6335,7 @@ async function pollForUpdates(){
     console.error('No se pudo revisar novedades', e);
   }
 }
-setInterval(pollForUpdates, 12000);
+setInterval(pollForUpdates, 30000);
 setInterval(() => {
   if(state.clientSession && state.clientView==='inicio'){
     const activeBanners = bannerRepository.getActive();
