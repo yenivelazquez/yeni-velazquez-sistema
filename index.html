@@ -1818,6 +1818,7 @@ const state = {
   checklistDate: new Date().toISOString().slice(0,10),
   checklistTeamDate: new Date().toISOString().slice(0,10),
   diagFormDraft: null,
+  authLoading: false,
 };
 
 function setState(patch){ Object.assign(state, patch); render(); }
@@ -1926,7 +1927,7 @@ function renderPortalLogin(){
       <label class="field-label">Repetila</label>
       <input class="input" id="newPasswordInput2" type="password" placeholder="Repetí tu contraseña" style="margin-bottom:14px;">
       ${state.errors.client ? `<div style="color:#DC2626; font-size:13px; margin-bottom:10px;">${state.errors.client}</div>` : ''}
-      <button class="btn btn-primary btn-block" data-action="submitSetPassword">Crear contraseña y entrar</button>
+      <button class="btn btn-primary btn-block" data-action="submitSetPassword" ${state.authLoading?'disabled style="opacity:0.7;"':''}>${state.authLoading?'Ingresando…':'Crear contraseña y entrar'}</button>
       <button class="btn btn-ghost btn-block" data-action="backToPhone" style="margin-top:6px;">Volver</button>
     `;
   } else if(step === 'enterPassword'){
@@ -1974,7 +1975,7 @@ function renderAdminLogin(){
       <label class="field-label">Repetila</label>
       <input class="input" id="staffNewPasswordInput2" type="password" placeholder="Repetí tu contraseña" style="margin-bottom:14px;">
       ${state.errors.staff ? `<div style="color:#DC2626; font-size:13px; margin-bottom:10px;">${state.errors.staff}</div>` : ''}
-      <button class="btn btn-primary btn-block" data-action="submitStaffSetPassword">Crear contraseña y entrar</button>
+      <button class="btn btn-primary btn-block" data-action="submitStaffSetPassword" ${state.authLoading?'disabled style="opacity:0.7;"':''}>${state.authLoading?'Ingresando…':'Crear contraseña y entrar'}</button>
     `;
   } else if(step === 'password'){
     body = `
@@ -1983,7 +1984,7 @@ function renderAdminLogin(){
       <label class="field-label">Contraseña</label>
       <input class="input" type="password" id="staffPasswordInput" placeholder="••••••" style="margin-bottom:14px;">
       ${state.errors.staff ? `<div style="color:#DC2626; font-size:13px; margin-bottom:10px;">${state.errors.staff}</div>` : ''}
-      <button class="btn btn-primary btn-block" data-action="submitAdminLogin">Ingresar</button>
+      <button class="btn btn-primary btn-block" data-action="submitAdminLogin" ${state.authLoading?'disabled style="opacity:0.7;"':''}>${state.authLoading?'Ingresando…':'Ingresar'}</button>
     `;
   } else {
     body = `
@@ -4042,7 +4043,11 @@ function modalNewDiagnosis(m){
   <div class="photo-chip-grid" style="margin-bottom:6px;">
     ${state.diagPhotoDrafts.map(p => `
       <div class="photo-chip">
-        <div class="photo-chip-thumb">${p.dataUrl ? `<img src="${p.dataUrl}">` : Icon('archive')}</div>
+        <div class="photo-chip-thumb" style="position:relative;">
+          ${p.dataUrl ? `<img src="${p.dataUrl}">` : Icon('archive')}
+          ${p.uploading ? `<div style="position:absolute; inset:0; background:rgba(17,17,17,0.45); display:flex; align-items:center; justify-content:center; color:#fff; font-size:10px; font-weight:700; border-radius:inherit;">Subiendo…</div>` : ''}
+          ${p.uploadFailed ? `<div style="position:absolute; inset:0; background:rgba(220,38,38,0.55); display:flex; align-items:center; justify-content:center; color:#fff; font-size:10px; font-weight:700; border-radius:inherit;">Falló</div>` : ''}
+        </div>
         <div class="photo-chip-name">${p.filename}</div>
         <input id="diag_photo_desc_${p.id}" class="input" placeholder="Ej: Antes" value="${p.description||''}" style="font-size:10.5px; padding:5px 6px; margin-top:4px;">
         <select id="diag_photo_vis_${p.id}" class="input" style="font-size:10.5px; padding:5px 6px; margin-top:4px;">
@@ -5051,7 +5056,10 @@ function handleAction(action, el){
     const staff = state.staffLoginPendingId ? staffRepository.getById(state.staffLoginPendingId) : null;
     const password = document.getElementById('staffPasswordInput').value;
     if(!staff){ state.errors.staff = 'Algo salió mal, volvé a escribir tu correo.'; setState({staffLoginStep:'login'}); return; }
+    state.authLoading = true;
+    render();
     authService.signInStaff(staff.email, password).then(res => {
+      state.authLoading = false;
       if(res.error){ state.errors.staff = res.error; render(); return; }
       if(res.needsPasswordSetup){
         state.errors = {};
@@ -5069,7 +5077,10 @@ function handleAction(action, el){
     const p2 = document.getElementById('staffNewPasswordInput2').value;
     if(!p1 || p1.length < 4){ state.errors.staff = 'La contraseña tiene que tener al menos 4 caracteres.'; render(); return; }
     if(p1 !== p2){ state.errors.staff = 'Las contraseñas no coinciden.'; render(); return; }
+    state.authLoading = true;
+    render();
     authService.completeStaffPasswordSetup(state.staffLoginPendingId, p1).then(res => {
+      state.authLoading = false;
       state.errors = {};
       persistSession('staff', res.staffId);
       setState({staffSession:{staffId: res.staffId}, staffLoginStep:'login', staffLoginPendingId:null, staffView:'dashboard'});
@@ -5090,7 +5101,10 @@ function handleAction(action, el){
     const p2 = document.getElementById('newPasswordInput2').value;
     if(!p1 || p1.length < 4){ state.errors.client = 'La contraseña tiene que tener al menos 4 caracteres.'; render(); return; }
     if(p1 !== p2){ state.errors.client = 'Las contraseñas no coinciden.'; render(); return; }
+    state.authLoading = true;
+    render();
     authService.completeClientPasswordSetup(state.clientLoginPendingId, p1).then(res => {
+      state.authLoading = false;
       state.errors = {};
       persistSession('client', res.clientId);
       setState({clientSession:{clientId: res.clientId}, clientLoginStep:'phone', clientLoginPendingId:null, clientView:'inicio'});
@@ -5386,6 +5400,20 @@ function captureDiagFormDraft(){
   };
 }
 
+// Sube la foto ya comprimida a Supabase Storage (bucket "diagnosis-photos")
+// y devuelve su URL pública — así la foto no viaja mezclada con el resto
+// de los datos del salón cada vez que alguien guarda o abre la página.
+async function uploadPhotoToStorage(dataUrl, photoId){
+  if(!supabaseClient) throw new Error('Sin conexión a Supabase');
+  const res = await fetch(dataUrl);
+  const blob = await res.blob();
+  const path = `diagnosticos/${photoId}.jpg`;
+  const { error } = await supabaseClient.storage.from('diagnosis-photos').upload(path, blob, { contentType:'image/jpeg', upsert:true });
+  if(error) throw error;
+  const { data } = supabaseClient.storage.from('diagnosis-photos').getPublicUrl(path);
+  return data.publicUrl;
+}
+
 function attachDiagPhotoHandler(){
   const fileInput = document.getElementById('diag_photo_input');
   if(!fileInput) return;
@@ -5393,14 +5421,27 @@ function attachDiagPhotoHandler(){
     const files = Array.from(e.target.files || []);
     captureDiagFormDraft();
     for(const file of files){
-      try{
-        const dataUrl = await storageService.compressImage(file);
-        const photoId = uid();
-        photoPreviewCache[photoId] = dataUrl;
-        state.diagPhotoDrafts.push({ id: photoId, filename: file.name, description:'', visibility:'internal', existing:false, dataUrl });
-      }catch(err){ console.error('No se pudo leer la foto', err); }
+      let compressed;
+      try{ compressed = await storageService.compressImage(file); }
+      catch(err){ console.error('No se pudo leer la foto', err); continue; }
+      const photoId = uid();
+      // Vista previa instantánea mientras se sube en segundo plano.
+      photoPreviewCache[photoId] = compressed;
+      state.diagPhotoDrafts.push({ id: photoId, filename: file.name, description:'', visibility:'internal', existing:false, dataUrl: compressed, uploading:true });
+      render();
+      uploadPhotoToStorage(compressed, photoId).then(url => {
+        const draft = state.diagPhotoDrafts.find(p=>p.id===photoId);
+        if(draft){ draft.dataUrl = url; draft.uploading = false; }
+        photoPreviewCache[photoId] = url;
+        render();
+      }).catch(err => {
+        console.error('No se pudo subir la foto a la nube', err);
+        const draft = state.diagPhotoDrafts.find(p=>p.id===photoId);
+        if(draft){ draft.uploading = false; draft.uploadFailed = true; }
+        render();
+        showToast('No se pudo subir una foto — probá sacarla y subirla de nuevo.');
+      });
     }
-    render();
   };
 }
 
@@ -5713,6 +5754,11 @@ async function doMarkDelivered(id, benefitId){
 async function doSaveDiagnosis(clientId, diagId){
   const c = clientRepository.getById(clientId);
   if(!c) return;
+  if(state.diagPhotoDrafts.some(p=>p.uploading)){
+    state.errors.newDiagnosis = 'Esperá a que terminen de subirse las fotos (unos segundos) antes de guardar.';
+    render();
+    return;
+  }
   const g = (id) => { const el = document.getElementById(id); return el ? el.value.trim() : ''; };
   const gChecked = (name) => Array.from(document.querySelectorAll(`input[name="diag_${name}"]:checked`)).map(el=>el.value);
 
