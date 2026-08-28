@@ -672,7 +672,7 @@
   .checklist-section-head{ display:flex; align-items:center; justify-content:space-between; margin-bottom:4px; }
   .checklist-section-title{ font-size:15.5px; font-weight:700; }
   .checklist-section-intro{ font-size:13px; color:var(--text-secondary); font-style:italic; margin:0 0 12px; }
-  .checklist-item{ display:flex; align-items:center; gap:12px; padding:13px 16px; border:1px solid var(--silver); border-radius:14px; margin-bottom:8px; cursor:pointer; transition:all 200ms cubic-bezier(.2,.8,.2,1); }
+  .checklist-item{ display:flex; align-items:center; gap:12px; padding:16px 16px; min-height:26px; border:1px solid var(--silver); border-radius:14px; margin-bottom:8px; cursor:pointer; -webkit-tap-highlight-color:rgba(236,72,153,0.15); touch-action:manipulation; transition:all 200ms cubic-bezier(.2,.8,.2,1); }
   .checklist-item:hover{ border-color:rgba(236,72,153,0.3); }
   .checklist-item.checked{ background:var(--pink-light); border-color:rgba(236,72,153,0.22); }
   .checklist-item.readonly{ cursor:default; }
@@ -1857,7 +1857,7 @@ function render(){
   const scrollY = window.scrollY;
   // Los contenedores con scroll propio (listas largas dentro de una card) también
   // pierden su posición al reconstruirse — los guardamos y restauramos aparte.
-  const INNER_SCROLL_SELECTORS = ['.turnos-list-scroll', '.scroll-list', '.team-table-scroll', '.activity-scroll'];
+  const INNER_SCROLL_SELECTORS = ['.turnos-list-scroll', '.scroll-list', '.team-table-scroll', '.activity-scroll', '.modal', '.drawer-panel'];
   const savedInnerScrolls = INNER_SCROLL_SELECTORS.map(sel => {
     const el = document.querySelector(sel);
     return el ? [sel, el.scrollTop] : null;
