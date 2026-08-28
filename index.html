@@ -1468,6 +1468,7 @@ const bannerRepository = {
   },
 };
 
+const MAX_ACTIVE_DIAGNOSES = 3;
 const diagnosisRepository = {
   getAll: () => Object.values(DB.diagnoses),
   getById: (id) => DB.diagnoses[id] || null,
