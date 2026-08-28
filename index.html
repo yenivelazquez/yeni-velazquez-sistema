@@ -927,6 +927,9 @@ function currentStaff(){
    pasa siempre por los repositorios de más abajo.
    ========================================================= */
 const DB_KEY = 'yeni-salon-db-v2';
+// Última vez que sabemos que se guardó algo — para poder preguntar barato
+// "¿cambió desde entonces?" en vez de traer todo el paquete cada vez.
+let lastKnownDataTimestamp = null;
 
 /* ---- Sesión persistida en este dispositivo (no se mezcla con la base de
    datos) — así no hace falta loguearse de nuevo cada vez que se cierra la
@@ -1057,6 +1060,7 @@ async function loadDB(){
       if(!error && data && Object.keys(data).length){
         loaded = data;
         loadedFromServer = true;
+        lastKnownDataTimestamp = new Date().toISOString();
       }
     }catch(e){
       console.error('No se pudo conectar con Supabase, uso el respaldo local', e);
@@ -1103,6 +1107,8 @@ async function saveDB(){
       if(error){
         console.error('Error guardando en Supabase', error);
         showToast('No se pudo guardar en la nube — revisá tu conexión a internet.');
+      } else {
+        lastKnownDataTimestamp = new Date().toISOString();
       }
     }catch(e){
       console.error('Error de red guardando en Supabase', e);
@@ -6318,13 +6324,22 @@ setInterval(() => { checkOverdueAppointments(); }, 60000);
 // persona y las trae — sin que nadie tenga que recargar la página. No
 // interrumpe si hay un formulario abierto, para no perder lo que se está
 // escribiendo en el medio.
+// Guardamos la última vez que sabemos que se guardó algo — así podemos
+// preguntar "¿cambió desde entonces?" de forma barata, sin traer todo el
+// paquete de datos cada vez.
 async function pollForUpdates(){
   if(!supabaseClient) return;
   if(state.modal) return;
   if(!state.staffSession && !state.clientSession) return;
   try{
+    const { data: ts, error: tsError } = await supabaseClient.rpc('get_app_data_timestamp', { secret: APP_SECRET });
+    if(tsError) return;
+    if(lastKnownDataTimestamp && ts && new Date(ts).getTime() <= new Date(lastKnownDataTimestamp).getTime()){
+      return; // nada cambió desde la última vez — no hace falta traer todo el paquete
+    }
     const { data: serverData, error } = await supabaseClient.rpc('get_app_data', { secret: APP_SECRET });
     if(error || !serverData || !Object.keys(serverData).length) return;
+    lastKnownDataTimestamp = ts || new Date().toISOString();
     const before = JSON.stringify(DB);
     DB = mergeDB(serverData, DB);
     if(JSON.stringify(DB) !== before){
@@ -6335,7 +6350,7 @@ async function pollForUpdates(){
     console.error('No se pudo revisar novedades', e);
   }
 }
-setInterval(pollForUpdates, 30000);
+setInterval(pollForUpdates, 15000);
 setInterval(() => {
   if(state.clientSession && state.clientView==='inicio'){
     const activeBanners = bannerRepository.getActive();
