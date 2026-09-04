@@ -488,7 +488,7 @@
   /* ---- Turnos ---- */
   .turnos-hero-card{ background:#fff; border-radius:24px; box-shadow:var(--shadow-soft); padding:32px; }
   .turnos-toolbar{ display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:16px; margin-bottom:28px; }
-  .date-nav{ display:flex; align-items:center; gap:14px; }
+  .date-nav{ display:flex; align-items:center; gap:14px; position:relative; }
   .date-nav-btn{ width:44px; height:44px; border-radius:50%; background:#fff; border:1px solid var(--silver); display:flex; align-items:center; justify-content:center; transition:all 200ms ease; }
   .date-nav-btn:hover{ border-color:rgba(236,72,153,0.35); background:var(--pink-light); }
   .date-nav-btn:hover .icon{ stroke:var(--pink-dark); }
@@ -3012,6 +3012,8 @@ function renderStaffTurnos(){
         <button class="date-nav-btn" data-action="turnosShiftDate" data-days="${state.turnosViewMode==='week'?-7:-1}">${Icon('arrowleft')}</button>
         <div class="date-nav-label">${state.turnosViewMode==='week' ? 'Semana' : dayLabel}</div>
         <button class="date-nav-btn" data-action="turnosShiftDate" data-days="${state.turnosViewMode==='week'?7:1}">${Icon('chevron')}</button>
+        <button class="date-nav-btn" data-action="triggerTurnosDatePicker" title="Ir a una fecha puntual">${Icon('calendar')}</button>
+        <input type="date" id="turnos_date_picker" value="${state.turnosDate}" style="position:absolute; opacity:0; width:1px; height:1px; pointer-events:none;">
       </div>
       <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
         <div class="view-toggle">
@@ -5441,6 +5443,10 @@ function handleAction(action, el){
   else if(action==='confirmDeleteDiagnosis'){ doDeleteDiagnosisPermanently(el.getAttribute('data-diagid')); }
   else if(action==='selectAppointmentClient'){ state.apSelectedClientId = el.getAttribute('data-clientid'); render(); }
   else if(action==='clearAppointmentClient'){ state.apSelectedClientId = null; state.apClientSearch = ''; render(); }
+  else if(action==='triggerTurnosDatePicker'){
+    const el2 = document.getElementById('turnos_date_picker');
+    if(el2){ if(el2.showPicker) el2.showPicker(); else el2.click(); }
+  }
   else if(action==='turnosShiftDate'){
     const days = parseInt(el.getAttribute('data-days'),10);
     const d = new Date(state.turnosDate+'T00:00:00'); d.setDate(d.getDate()+days);
@@ -5483,6 +5489,12 @@ function handleAction(action, el){
 }
 
 function attachSearchHandler(){
+  const turnosDatePicker = document.getElementById('turnos_date_picker');
+  if(turnosDatePicker){
+    turnosDatePicker.onchange = (e) => {
+      if(e.target.value) setState({ turnosDate: e.target.value, turnosViewMode:'day' });
+    };
+  }
   const input = document.getElementById('staffSearchInput');
   if(input){
     input.oninput = (e) => { state.clientSearch = e.target.value; };
