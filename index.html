@@ -3049,8 +3049,6 @@ function renderStaffTurnos(){
   const allDayAppts = appointmentRepository.getByDate(state.turnosDate)
     .filter(a=>clientIds.includes(a.clientId))
     .sort((a,b)=>timeToMinutes(a.time)-timeToMinutes(b.time));
-  const activeAppts = allDayAppts.filter(a => a.status==='pending' || a.status==='confirmed' || a.status==='overdue');
-  const resolvedAppts = allDayAppts.filter(a => a.status==='done' || a.status==='noshow' || a.status==='cancelled');
 
   const renderRow = (a) => {
     const c = clientRepository.getById(a.clientId);
@@ -3079,19 +3077,13 @@ function renderStaffTurnos(){
   <div class="turnos-hero-card">
     ${controls}
     <div class="turnos-list-scroll">
-      ${activeAppts.length ? activeAppts.map(renderRow).join('') : `
+      ${allDayAppts.length ? allDayAppts.map(renderRow).join('') : `
         <div class="benefit-empty-dashed">
           ${Icon('calendar')}
-          <h3>No quedan turnos por resolver</h3>
+          <h3>No hay turnos cargados para este día</h3>
           <p>Los nuevos turnos aparecerán automáticamente aquí.</p>
         </div>
       `}
-      ${resolvedAppts.length ? `
-        <span class="info-card-link" data-action="${state.turnosShowResolved?'hideResolvedAppts':'showResolvedAppts'}" style="margin:10px 0 4px; display:inline-flex;">
-          ${state.turnosShowResolved?'Ocultar':'Ver'} resueltos y cancelados (${resolvedAppts.length}) ${Icon('chevron')}
-        </span>
-        ${state.turnosShowResolved ? resolvedAppts.map(renderRow).join('') : ''}
-      ` : ''}
     </div>
   </div>`;
 }
