@@ -1099,10 +1099,15 @@ const rowConverters = {
     fromRow: r => ({ id:r.id, clientId:r.client_id, date:r.date, time:r.time, sucursal:r.sucursal,
       professional:r.professional, treatment:r.treatment, durationMinutes:r.duration, status:r.status,
       createdByName:r.created_by_name, notes:r.notes, linkedTreatmentId:r.linked_treatment_id,
+      totalAmount:r.total_amount, depositAmount:r.deposit_amount, balanceAmount:r.balance_amount,
+      paymentMethod:r.payment_method, dni:r.dni, productsUsed:r.products_used,
       createdAt:r.created_at, updatedAt:r.updated_at }),
     toRow: a => ({ id:a.id, client_id:a.clientId||null, date:a.date, time:a.time, sucursal:a.sucursal||null,
       professional:a.professional||null, treatment:a.treatment||null, duration:a.durationMinutes||null, status:a.status||'pending',
       created_by_name:a.createdByName||null, notes:a.notes||null, linked_treatment_id:a.linkedTreatmentId||null,
+      total_amount:a.totalAmount!=null?a.totalAmount:null, deposit_amount:a.depositAmount!=null?a.depositAmount:null,
+      balance_amount:a.balanceAmount!=null?a.balanceAmount:null, payment_method:a.paymentMethod||null,
+      dni:a.dni||null, products_used:a.productsUsed||null,
       created_at:a.createdAt, updated_at:a.updatedAt }),
   },
   treatment_catalog: {
@@ -4250,7 +4255,6 @@ function modalAppointmentForm(m){
     <div><label class="field-label">Hora</label><input class="input" id="ap_time" type="time" value="${editing?editing.time:'10:00'}"></div>
   </div>
   <label class="field-label">Sucursal</label>
-  <label class="field-label">Sucursal</label>
   ${branchLocked ? `
     <select class="input" id="ap_sucursal" disabled style="margin-bottom:6px; opacity:0.7;">
       <option selected>${staff.branch}</option>
@@ -4277,6 +4281,23 @@ function modalAppointmentForm(m){
   `}
   <label class="field-label">Duración (minutos)</label>
   <input class="input" id="ap_duration" type="number" step="15" value="${editing?(editing.durationMinutes||60):60}" style="margin-bottom:14px;">
+
+  <div style="border-top:1px solid var(--silver); margin:18px 0 16px; padding-top:16px;">
+    <div style="font-size:13.5px; font-weight:700; margin-bottom:2px;">Pago y detalles del turno</div>
+    <p style="color:var(--text-secondary); font-size:12px; margin:0 0 12px;">Se puede completar al agendar (seña, forma de pago) y volver a editar después de la visita (productos usados).</p>
+    <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px; margin-bottom:12px;">
+      <div><label class="field-label" style="font-size:11.5px;">Precio total</label><input class="input" id="ap_total" type="number" placeholder="$" value="${editing&&editing.totalAmount!=null?editing.totalAmount:''}"></div>
+      <div><label class="field-label" style="font-size:11.5px;">Seña</label><input class="input" id="ap_deposit" type="number" placeholder="$" value="${editing&&editing.depositAmount!=null?editing.depositAmount:''}"></div>
+      <div><label class="field-label" style="font-size:11.5px;">Saldo en local</label><input class="input" id="ap_balance" type="number" placeholder="$" value="${editing&&editing.balanceAmount!=null?editing.balanceAmount:''}"></div>
+    </div>
+    <label class="field-label">Forma de pago</label>
+    <input class="input" id="ap_payment_method" placeholder="Ej: Efectivo, Transferencia, 60 efect + 21 transf..." value="${editing?(editing.paymentMethod||''):''}" style="margin-bottom:12px;">
+    <label class="field-label">DNI</label>
+    <input class="input" id="ap_dni" placeholder="Ej: 22.696.956" value="${editing?(editing.dni||''):''}" style="margin-bottom:12px;">
+    <label class="field-label">Productos usados</label>
+    <input class="input" id="ap_products" placeholder="Ej: Kit Yeni, térmico" value="${editing?(editing.productsUsed||''):''}" style="margin-bottom:6px;">
+  </div>
+
   <label class="field-label">Observaciones (opcional)</label>
   <textarea class="input" id="ap_notes" rows="2" style="margin-bottom:6px; resize:vertical;">${editing?(editing.notes||''):''}</textarea>
   ${editing && editing.createdByName ? `<p style="color:var(--text-secondary); font-size:11.5px; margin:4px 0 0;">Turno cargado por ${editing.createdByName} el ${fmtDate(editing.createdAt)}</p>` : ''}
@@ -6001,6 +6022,14 @@ async function doSaveAppointment(id){
   const treatment = document.getElementById('ap_treatment').value.trim();
   const durationMinutes = parseInt(document.getElementById('ap_duration').value || '60', 10);
   const notes = document.getElementById('ap_notes').value.trim();
+  const g = (elId) => { const el = document.getElementById(elId); return el ? el.value.trim() : ''; };
+  const gNum = (elId) => { const v = g(elId); return v==='' ? null : parseFloat(v); };
+  const totalAmount = gNum('ap_total');
+  const depositAmount = gNum('ap_deposit');
+  const balanceAmount = gNum('ap_balance');
+  const paymentMethod = g('ap_payment_method');
+  const dni = g('ap_dni');
+  const productsUsed = g('ap_products');
 
   if(!date || !time){ state.errors.appointment = 'Completá fecha y hora.'; render(); return; }
 
@@ -6013,7 +6042,8 @@ async function doSaveAppointment(id){
   }
 
   const staff = currentStaff();
-  const data = { clientId, date, time, sucursal, professional, treatment, durationMinutes, notes };
+  const data = { clientId, date, time, sucursal, professional, treatment, durationMinutes, notes,
+    totalAmount, depositAmount, balanceAmount, paymentMethod, dni, productsUsed };
 
   if(id){
     await appointmentRepository.update(id, data);
