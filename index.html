@@ -1122,9 +1122,9 @@ const rowConverters = {
       date:e.date, sucursal:e.sucursal||null, staff_id:e.staffId||null, created_at:e.createdAt }),
   },
   banners: {
-    fromRow: r => ({ id:r.id, image:r.image_url, caption:r.caption, link:r.link, active:!!r.active,
+    fromRow: r => ({ id:r.id, imageUrl:r.image_url, caption:r.caption, link:r.link, active:!!r.active,
       createdAt:r.created_at, updatedAt:r.updated_at }),
-    toRow: b => ({ id:b.id, image_url:b.image||null, caption:b.caption||null, link:b.link||null,
+    toRow: b => ({ id:b.id, image_url:b.imageUrl||null, caption:b.caption||null, link:b.link||null,
       active: b.active!==false, created_at:b.createdAt, updated_at:b.updatedAt }),
   },
   checklists: {
