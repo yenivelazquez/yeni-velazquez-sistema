@@ -368,7 +368,7 @@
   .gate-btn .gs{ font-size:12.5px; color:var(--text-secondary); }
 
   /* ---- client portal ---- */
-  .phone-shell{ max-width:430px; margin:0 auto; min-height:100vh; padding-bottom:94px; position:relative; }
+  .phone-shell{ max-width:430px; margin:0 auto; min-height:100vh; padding-bottom:24px; position:relative; }
 
   /* ---- Navegación flotante del portal de clienta (compartida desktop/mobile) ---- */
   .client-floating-nav{
@@ -657,8 +657,6 @@
     .quick-access-card{ padding:14px 8px; border-radius:18px; }
     .qa-icon{ width:34px; height:34px; }
     .qa-label{ font-size:12.5px; }
-    .cbn-item{ font-size:9.5px; }
-    .cbn-item .icon{ width:19px; height:19px; }
   }
   .quick-access-card{ background:#fff; border:1px solid var(--silver); border-radius:22px; padding:22px 18px; text-align:left; display:flex; flex-direction:column; gap:12px; transition:all 220ms cubic-bezier(.2,.8,.2,1); }
   .quick-access-card:hover{ border-color:rgba(236,72,153,0.3); transform:translateY(-3px); box-shadow:var(--shadow-soft); }
@@ -688,12 +686,12 @@
   .qa-icon .icon{ width:19px; height:19px; stroke:var(--pink-dark); }
   .qa-label{ font-size:14.5px; font-weight:700; }
 
-  /* ---- client portal: bottom nav simple (solo mobile) ---- */
-  .client-bottom-nav-v2{ position:fixed; bottom:0; left:0; right:0; max-width:430px; margin:0 auto; display:flex; background:rgba(255,255,255,0.92); backdrop-filter:blur(20px) saturate(160%); border-top:1px solid var(--silver); padding:10px 6px calc(10px + env(safe-area-inset-bottom,0px)); z-index:120; }
-  .cbn-item{ flex:1; display:flex; flex-direction:column; align-items:center; gap:4px; color:var(--text-secondary); font-size:10.5px; font-weight:600; }
-  .cbn-item.active{ color:var(--pink-dark); }
-  .cbn-item .icon{ width:21px; height:21px; }
-
+  /* ---- client portal: barra superior con menú de 3 rayitas (solo mobile) ---- */
+  .client-mobile-topbar{ display:flex; align-items:center; gap:12px; padding:16px 20px 4px; }
+  .client-mobile-topbar-wrap{ position:relative; flex-shrink:0; }
+  .client-menu-btn{ width:38px; height:38px; border-radius:12px; background:#fff; border:1px solid var(--silver); display:flex; align-items:center; justify-content:center; }
+  .client-mobile-topbar-title{ font-size:15px; font-weight:700; }
+  .row-menu-item.active-menu-item{ color:var(--pink-dark); background:var(--pink-light); }
 
   .client-welcome{ margin-bottom:26px; }
   .client-welcome .cw-eyebrow{ display:flex; align-items:center; gap:8px; font-size:15px; color:var(--text-secondary); margin:0 0 4px; }
@@ -1916,6 +1914,7 @@ const state = {
   notifOpen: false,
   profileOpen: false,
   clientNotifOpen: false,
+  clientMobileNavOpen: false,
   clientProfileOpen: false,
   clientesFilter: 'todas',
   drawerClientId: null,
@@ -5111,15 +5110,25 @@ function renderClientMobile(c){
   else if(state.clientView==='beneficios') content = clientBeneficios(c);
   else if(state.clientView==='cuenta') content = clientCuenta(c);
 
+  const currentNav = CLIENT_NAV.find(n=>n.id===state.clientView) || CLIENT_NAV[0];
+
   return `
   <div class="phone-shell client-mobile">
-    ${content}
-    <div class="client-bottom-nav-v2">
-      ${CLIENT_NAV.map(n=>`
-        <div class="cbn-item ${state.clientView===n.id?'active':''}" data-action="setClientView" data-view="${n.id}">
-          ${Icon(n.icon)}<span>${n.label}</span>
-        </div>`).join('')}
+    <div class="client-mobile-topbar">
+      <div class="client-mobile-topbar-wrap">
+        <button class="client-menu-btn" data-action="toggleClientMobileNav">${Icon('menu')}</button>
+        ${state.clientMobileNavOpen ? `
+          <div class="dropdown-scrim" data-action="closeClientMobileNav"></div>
+          <div class="glass row-menu fade-in" style="left:0; right:auto; width:220px;">
+            ${CLIENT_NAV.map(n=>`
+              <div class="row-menu-item ${state.clientView===n.id?'active-menu-item':''}" data-action="setClientView" data-view="${n.id}">
+                ${Icon(n.icon)} ${n.label}
+              </div>`).join('')}
+          </div>` : ''}
+      </div>
+      <div class="client-mobile-topbar-title">${currentNav.label}</div>
     </div>
+    ${content}
   </div>`;
 }
 
@@ -5293,7 +5302,9 @@ function handleAction(action, el){
     else{ state.errors.client = 'Contraseña incorrecta.'; render(); }
   }
   else if(action==='setStaffView'){ setState({staffView: el.getAttribute('data-view'), sidebarOpen:false}); }
-  else if(action==='setClientView'){ setState({clientView: el.getAttribute('data-view')}); }
+  else if(action==='setClientView'){ setState({clientView: el.getAttribute('data-view'), clientMobileNavOpen:false}); }
+  else if(action==='toggleClientMobileNav'){ setState({clientMobileNavOpen: !state.clientMobileNavOpen}); }
+  else if(action==='closeClientMobileNav'){ setState({clientMobileNavOpen:false}); }
   else if(action==='openSidebar'){ setState({sidebarOpen:true}); }
   else if(action==='closeSidebar'){ setState({sidebarOpen:false}); }
   else if(action==='staffLogout'){
