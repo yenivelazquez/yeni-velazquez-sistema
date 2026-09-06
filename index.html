@@ -4694,10 +4694,7 @@ function clientNotifDropdownHTML(c){
     ? items.slice(0,6).map(it=>`
         <div class="dropdown-item" data-notif-key="${it.key}">
           <span>${it.text}</span>
-          <span style="display:flex; align-items:center; gap:6px; flex-shrink:0;">
-            ${it.badge?`<span class="badge ${it.cls}">${it.badge}</span>`:''}
-            <button class="notif-dismiss-btn" data-action="dismissClientNotification" data-key="${it.key}" title="Marcar como leída">${Icon('x')}</button>
-          </span>
+          ${it.badge?`<span class="badge ${it.cls}">${it.badge}</span>`:''}
         </div>`).join('')
     : `<p style="font-size:13px; color:var(--text-secondary); margin:0;">Sin novedades por ahora.</p>`;
 }
@@ -4857,7 +4854,6 @@ function accountCardInner(c){
     </div>
     <div class="account-row">${Icon('phone')} ${c.phone}</div>
     <div class="account-row">${Icon('calendar')} Clienta desde ${fmtDate(c.createdAt)}</div>
-    <button class="btn btn-secondary btn-block" style="margin-top:8px;" data-action="editAccountStub">${Icon('edit')} Editar mis datos</button>
   `;
 }
 
@@ -5480,12 +5476,10 @@ function handleAction(action, el){
   else if(action==='copyCode'){ doCopyCode(el.getAttribute('data-code')); }
   else if(action==='viewTreatmentDetails'){ doViewTreatmentDetails(el.getAttribute('data-id')); }
   else if(action==='openHelp'){ showToast('Escribinos por WhatsApp y te ayudamos enseguida.'); }
-  else if(action==='editAccountStub'){ showToast('Muy pronto vas a poder editar tus datos desde acá.'); }
   else if(action==='toggleClientNotif'){ setState({clientNotifOpen: !state.clientNotifOpen, clientProfileOpen:false}); }
   else if(action==='toggleClientProfile'){ setState({clientProfileOpen: !state.clientProfileOpen, clientNotifOpen:false}); }
   else if(action==='closeClientDropdowns'){ setState({clientNotifOpen:false, clientProfileOpen:false}); }
   else if(action==='dismissStaffNotification'){ doDismissNotification(el.getAttribute('data-key'), false); }
-  else if(action==='dismissClientNotification'){ doDismissNotification(el.getAttribute('data-key'), true); }
 }
 
 function attachSearchHandler(){
