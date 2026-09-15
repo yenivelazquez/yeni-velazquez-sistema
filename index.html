@@ -1073,9 +1073,9 @@ const rowConverters = {
   },
   referral_codes: {
     fromRow: r => ({ code:r.code, ownerId:r.client_id, used:!!r.used, usedByClientId:r.used_by_client_id,
-      usedByName:r.used_by_name, usedAt:r.used_at, createdAt:r.created_at }),
+      usedByName:r.used_by_name, usedAt:r.used_at, uses:r.uses||[], createdAt:r.created_at }),
     toRow: r => ({ code:r.code, client_id:r.ownerId||null, used:!!r.used, used_by_client_id:r.usedByClientId||null,
-      used_by_name:r.usedByName||null, used_at:r.usedAt||null, created_at:r.createdAt }),
+      used_by_name:r.usedByName||null, used_at:r.usedAt||null, uses:r.uses||[], created_at:r.createdAt }),
   },
   diagnoses: {
     fromRow: r => ({ id:r.id, clientId:r.client_id, date:r.date, professional:r.professional, sucursal:r.sucursal,
@@ -1322,13 +1322,16 @@ const staffRepository = {
 const referralRepository = {
   getByCode: (code) => DB.referralCodes[code] || null,
   create: async (code, ownerId) => {
-    DB.referralCodes[code] = { code, ownerId, used:false, createdAt: nowIso() };
+    DB.referralCodes[code] = { code, ownerId, used:false, uses:[], createdAt: nowIso() };
     await sbUpsert('referral_codes', rowConverters.referral_codes.toRow(DB.referralCodes[code]));
   },
+  // El código nunca "se gasta" — cada vez que alguien lo usa, se suma un
+  // registro más a la lista de usos, sin límite.
   markUsed: async (code, usedByClientId, usedByName) => {
     const rc = DB.referralCodes[code];
     if(!rc) return null;
-    Object.assign(rc, { used:true, usedAt: nowIso(), usedByClientId, usedByName });
+    const uses = [...(rc.uses||[]), { clientId: usedByClientId, clientName: usedByName, at: nowIso() }];
+    Object.assign(rc, { uses, usedAt: nowIso(), usedByClientId, usedByName });
     await sbUpsert('referral_codes', rowConverters.referral_codes.toRow(rc));
     return rc;
   },
@@ -3991,7 +3994,7 @@ function modalCodeValidated(m){
   <div style="text-align:center; padding:14px 0 4px;">
     <div style="width:72px; height:72px; border-radius:50%; background:var(--pink-light); display:flex; align-items:center; justify-content:center; margin:0 auto 16px;">${Icon('check')}</div>
     <h2 style="margin:0 0 6px;">¡Código canjeado con éxito!</h2>
-    <p style="color:var(--text-secondary); font-size:14px; margin:0 0 20px;">${p.ownerName} se ganó el Kit Bienvenida</p>
+    <p style="color:var(--text-secondary); font-size:14px; margin:0 0 20px;">${p.ownerName} sumó 50 puntos</p>
   </div>
   <button class="btn btn-primary btn-block" data-action="closeModal">Entendido</button>
   `;
@@ -5722,7 +5725,6 @@ async function doCreateClient(){
   if(refInput){
     rc = referralRepository.getByCode(refInput);
     if(!rc){ state.errors.createClient = 'Ese código de referido no existe.'; render(); return; }
-    if(rc.used){ state.errors.createClient = 'Ese código ya fue usado.'; render(); return; }
   }
 
   state.creatingClient = true;
@@ -5742,8 +5744,7 @@ async function doCreateClient(){
     const owner = clientRepository.getById(rc.ownerId);
     if(owner){
       await clientRepository.update(owner.id, {
-        points: (owner.points||0) + 100,
-        benefitsClaimed: [...(owner.benefitsClaimed||[]), {id: uid(), name:'Kit Bienvenida', date: nowIso(), delivered:false, code: genBenefitCode()}],
+        points: (owner.points||0) + 50,
       });
       ownerName = owner.name;
     }
@@ -5754,7 +5755,7 @@ async function doCreateClient(){
   state.creatingClient = false;
   state.modal = {type:'clientCreated', payload:{id:newClient.id, phone, name, referralCode}};
   render();
-  if(ownerName) showToast(`${ownerName} se ganó el Kit Bienvenida`);
+  if(ownerName) showToast(`${ownerName} sumó 50 puntos`);
 }
 
 function catalogSnapshotFor(treatmentName){
@@ -5781,15 +5782,13 @@ async function doSaveProfileTreatment(id){
   if(refInput){
     const rc = referralRepository.getByCode(refInput);
     if(!rc){ state.errors.profileTreatment = 'Ese código de referido no existe.'; render(); return; }
-    if(rc.used){ state.errors.profileTreatment = 'Ese código ya fue usado.'; render(); return; }
     if(rc.ownerId === id){ state.errors.profileTreatment = 'Una clienta no puede canjear su propio código.'; render(); return; }
     await referralRepository.markUsed(refInput, id, c.name);
     referredBy = refInput;
     const owner = clientRepository.getById(rc.ownerId);
     if(owner){
       await clientRepository.update(owner.id, {
-        points: (owner.points||0) + 100,
-        benefitsClaimed: [...(owner.benefitsClaimed||[]), {id: uid(), name:'Kit Bienvenida', date: nowIso(), delivered:false, code: genBenefitCode()}],
+        points: (owner.points||0) + 50,
       });
       ownerName = owner.name;
     }
@@ -5807,7 +5806,7 @@ async function doSaveProfileTreatment(id){
   state.modal = null;
   render();
   showToast(`Tratamiento cargado para ${c.name}`);
-  if(ownerName) showToast(`${ownerName} se ganó el Kit Bienvenida`);
+  if(ownerName) showToast(`${ownerName} sumó 50 puntos`);
 }
 
 async function doScheduleVisit(id){
@@ -5826,8 +5825,10 @@ function doViewCodeUsage(id){
   const c = clientRepository.getById(id);
   if(!c) return;
   const info = referralRepository.getByCode(c.referralCode);
-  if(!info || !info.used){ showToast(`El código ${c.referralCode} todavía no fue usado.`); return; }
-  showToast(`Usado por ${info.usedByName} el ${fmtDate(info.usedAt)}`);
+  const uses = info ? (info.uses||[]) : [];
+  if(!uses.length){ showToast(`El código ${c.referralCode} todavía no fue usado.`); return; }
+  const last = uses[uses.length-1];
+  showToast(`Usado ${uses.length} ${uses.length===1?'vez':'veces'} — la última, por ${last.clientName||'una clienta'} el ${fmtDate(last.at)}`);
 }
 
 async function doResetPassword(id){
@@ -5842,15 +5843,13 @@ async function doValidateCode(){
   const code = document.getElementById('v_code').value.trim().toUpperCase();
   const rc = referralRepository.getByCode(code);
   if(!rc){ state.errors.validateCode = 'Ese código no existe.'; render(); return; }
-  if(rc.used){ state.errors.validateCode = 'Este código ya fue usado y no puede volver a usarse.'; render(); return; }
   const owner = clientRepository.getById(rc.ownerId);
   if(!owner) return;
   await referralRepository.markUsed(code, null, null);
   await clientRepository.update(owner.id, {
-    points: (owner.points||0) + 100,
-    benefitsClaimed: [...(owner.benefitsClaimed||[]), {id: uid(), name:'Kit Bienvenida', date: nowIso(), delivered:false, code: genBenefitCode()}],
+    points: (owner.points||0) + 50,
   });
-  await auditRepository.log('referral.validate', {entity:'referral_codes', entityId:code, description:`Código ${code} validado`});
+  await auditRepository.log('referral.validate', {entity:'referral_codes', entityId:code, description:`Código ${code} validado — ${owner.name} sumó 50 puntos`});
   state.modal = {type:'codeValidated', payload:{ownerName: owner.name}};
   render();
 }
