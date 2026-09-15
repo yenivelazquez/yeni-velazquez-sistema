@@ -1746,10 +1746,11 @@ function clientList(){ return Object.values(DB.clients); }
    (staff.branchScope): 'own' la deja fija en su sucursal, 'all' le permite
    ver y alternar entre todas (Yeni, y quien se habilite por persona). */
 function effectiveBranchFilter(){
-  const s = currentStaff();
-  if(!s) return 'all';
-  if(s.branchScope === 'all') return state.branchFilter || 'all';
-  return s.branch;
+  // Todas las personas del equipo ven clientas de todas las sucursales por
+  // defecto (una clienta puede pasar de un local a otro con el tiempo) —
+  // el filtro por sucursal queda solo como una opción manual para
+  // quien tenga el desplegable de "Todas las sucursales" arriba.
+  return state.branchFilter || 'all';
 }
 function scopedClientList(){
   const scope = effectiveBranchFilter();
