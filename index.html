@@ -3397,6 +3397,7 @@ function renderChecklistEncargadaTeamPanel(adminList){
         <button class="date-nav-btn" data-action="checklistEncargadaTeamShiftDate" data-days="1">${Icon('chevron')}</button>
       </div>
     </div>
+    <div class="activity-scroll">
     ${activeAdmins.length ? activeAdmins.map(s => {
       const record = byStaffId[s.id];
       const progress = checklistEncargadaProgress(record);
@@ -3412,6 +3413,7 @@ function renderChecklistEncargadaTeamPanel(adminList){
         <span class="checklist-progress-badge ${complete?'complete':''}">${(started||complete) ? `${progress.done}/${progress.total}` : 'Sin empezar'}</span>
       </div>`;
     }).join('') : `<p style="color:var(--text-secondary); font-size:14px;">No hay administradoras activas para mostrar.</p>`}
+    </div>
   </div>`;
 }
 
@@ -6829,6 +6831,12 @@ function captureChecklistEncargadaTextsFromDOM(baseTexts){
   return texts;
 }
 
+// Estas tres funciones actualizan la pantalla al instante y dejan el
+// guardado en la nube corriendo en segundo plano (sin esperarlo antes de
+// redibujar). Si se esperara la vuelta de la red antes de mostrar el
+// cambio, un clic rápido sobre el mismo tilde podía "ganarle" al redibujo
+// anterior y revertirlo — eso era lo que hacía que, tildando varios
+// rápido, algunos quedaran destildados.
 async function doToggleChecklistEncargadaItem(groupId, idx){
   const staff = checklistEncargadaEditableGuard();
   if(!staff) return;
@@ -6838,7 +6846,7 @@ async function doToggleChecklistEncargadaItem(groupId, idx){
   checks[groupId] = [...(checks[groupId]||[])];
   checks[groupId][idx] = !checks[groupId][idx];
   const texts = captureChecklistEncargadaTextsFromDOM(record.texts);
-  await checklistEncargadaRepository.update(record.id, { checks, texts });
+  checklistEncargadaRepository.update(record.id, { checks, texts }).catch(()=>{});
   render();
 }
 
@@ -6848,7 +6856,7 @@ async function doSetChecklistEncargadaField(field, value){
   const todayStr = new Date().toISOString().slice(0,10);
   const record = await checklistEncargadaRepository.ensure(staff.id, staff.name, staff.branch, todayStr);
   const texts = captureChecklistEncargadaTextsFromDOM(record.texts);
-  await checklistEncargadaRepository.update(record.id, { [field]: value, texts });
+  checklistEncargadaRepository.update(record.id, { [field]: value, texts }).catch(()=>{});
   render();
 }
 
@@ -6869,7 +6877,7 @@ async function doToggleChecklistEncargadaConfirm(){
   const record = await checklistEncargadaRepository.ensure(staff.id, staff.name, staff.branch, todayStr);
   const nextConfirmado = !record.confirmado;
   const texts = captureChecklistEncargadaTextsFromDOM(record.texts);
-  await checklistEncargadaRepository.update(record.id, { confirmado: nextConfirmado, confirmadoAt: nextConfirmado ? nowIso() : null, texts });
+  checklistEncargadaRepository.update(record.id, { confirmado: nextConfirmado, confirmadoAt: nextConfirmado ? nowIso() : null, texts }).catch(()=>{});
   render();
 }
 
