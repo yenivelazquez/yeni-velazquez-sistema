@@ -989,7 +989,7 @@ const supabaseClient = (window.supabase && SUPABASE_URL && SUPABASE_ANON_KEY)
 
 function defaultDB(){
   return {
-    clients:{}, staff:{}, referralCodes:{}, diagnoses:{}, appointments:{}, treatmentCatalog:{}, expenses:{}, banners:{}, checklists:{},
+    clients:{}, staff:{}, referralCodes:{}, diagnoses:{}, appointments:{}, treatmentCatalog:{}, expenses:{}, banners:{}, checklists:{}, checklistEncargada:{},
     settings:{ salonName:'Yeni Velázquez', tagline:'Salón de Reconstrucción Capilar', branches:['Sucursal Centro','Sucursal Norte'], hours:'' },
     benefitTypes:[
       {id:uid(), name:'Kit Bienvenida', points:0},
@@ -1008,7 +1008,7 @@ function defaultDB(){
    gigante. Cada guardado toca solo la tabla que corresponde.
    ========================================================= */
 const SB_TABLES = ['clients','staff','referral_codes','diagnoses','appointments',
-  'treatment_catalog','expenses','banners','checklists','benefit_types','audit_log','settings'];
+  'treatment_catalog','expenses','banners','checklists','checklist_encargada','benefit_types','audit_log','settings'];
 
 function withTimeout(promise, ms){
   return Promise.race([
@@ -1131,6 +1131,16 @@ const rowConverters = {
     toRow: c => ({ id:c.id, staff_id:c.staffId, staff_name:c.staffName||null, date:c.date, checks:c.checks||{},
       reflexion:c.reflexion||null, created_at:c.createdAt, updated_at:c.updatedAt }),
   },
+  checklist_encargada: {
+    fromRow: r => ({ id:r.id, staffId:r.staff_id, staffName:r.staff_name, branch:r.branch, date:r.date,
+      checks:r.checks||{}, texts:r.texts||{}, consultoDireccion:r.consulto_direccion,
+      huboIncidencia:r.hubo_incidencia, confirmado:!!r.confirmado, confirmadoAt:r.confirmado_at,
+      createdAt:r.created_at, updatedAt:r.updated_at }),
+    toRow: c => ({ id:c.id, staff_id:c.staffId, staff_name:c.staffName||null, branch:c.branch||null, date:c.date,
+      checks:c.checks||{}, texts:c.texts||{}, consulto_direccion:c.consultoDireccion,
+      hubo_incidencia:c.huboIncidencia, confirmado:!!c.confirmado, confirmado_at:c.confirmadoAt||null,
+      created_at:c.createdAt, updated_at:c.updatedAt }),
+  },
   benefit_types: {
     fromRow: r => ({ id:r.id, name:r.name, icon:r.icon }),
     toRow: b => ({ id:b.id, name:b.name, icon:b.icon||null, created_at: nowIso() }),
@@ -1154,10 +1164,10 @@ async function loadDB(){
     return;
   }
   try{
-    const [clientsRows, staffRows, refRows, diagRows, apptRows, catalogRows, expenseRows, bannerRows, checklistRows, benefitRows, settingsRows, auditRows] = await Promise.all([
+    const [clientsRows, staffRows, refRows, diagRows, apptRows, catalogRows, expenseRows, bannerRows, checklistRows, checklistEncargadaRows, benefitRows, settingsRows, auditRows] = await Promise.all([
       sbSelectAll('clients'), sbSelectAll('staff'), sbSelectAll('referral_codes'), sbSelectAll('diagnoses'),
       sbSelectAll('appointments'), sbSelectAll('treatment_catalog'), sbSelectAll('expenses'), sbSelectAll('banners'),
-      sbSelectAll('checklists'), sbSelectAll('benefit_types'), sbSelectAll('settings'), sbSelectAll('audit_log'),
+      sbSelectAll('checklists'), sbSelectAll('checklist_encargada'), sbSelectAll('benefit_types'), sbSelectAll('settings'), sbSelectAll('audit_log'),
     ]);
 
     // "null" en cualquiera de estas listas significa que ESA tabla puntual
@@ -1175,6 +1185,7 @@ async function loadDB(){
     if(expenseRows !== null){ next.expenses = {}; expenseRows.forEach(r => { const e = rowConverters.expenses.fromRow(r); next.expenses[e.id] = e; }); }
     if(bannerRows !== null){ next.banners = {}; bannerRows.forEach(r => { const b = rowConverters.banners.fromRow(r); next.banners[b.id] = b; }); }
     if(checklistRows !== null){ next.checklists = {}; checklistRows.forEach(r => { const c = rowConverters.checklists.fromRow(r); next.checklists[c.id] = c; }); }
+    if(checklistEncargadaRows !== null){ next.checklistEncargada = {}; checklistEncargadaRows.forEach(r => { const c = rowConverters.checklist_encargada.fromRow(r); next.checklistEncargada[c.id] = c; }); }
     if(benefitRows !== null){ next.benefitTypes = benefitRows.map(r => rowConverters.benefit_types.fromRow(r)); }
     if(settingsRows !== null && settingsRows[0]){ next.settings = rowConverters.settings.fromRow(settingsRows[0]); }
     if(!next.settings.branches || !next.settings.branches.length) next.settings.branches = ['Sucursal Centro','Sucursal Norte'];
@@ -1402,6 +1413,92 @@ function checklistProgress(record){
   let done=0, total=0;
   CHECKLIST_SECTIONS.forEach(sec => { (record.checks[sec.id]||[]).forEach(v=>{ total++; if(v) done++; }); });
   return {done, total};
+}
+
+/* =========================================================
+   CHECKLIST DE ENCARGADA
+   Checklist aparte del "Checklist diario" de arriba — más completo,
+   con preguntas abiertas y Sí/No además de tildes. Solo lo completan
+   las administradoras; la propietaria lo ve en modo lectura, igual
+   que ya pasa con el checklist diario del equipo (mismo patrón,
+   tabla propia en Supabase para no mezclar nada de lo existente).
+   ========================================================= */
+const CHECKLIST_ENCARGADA_SECTIONS = [
+  { id:'apertura', title:'Apertura y organización del día', intro:'Antes de comenzar la jornada:', items:[
+    'Salón en condiciones de orden, higiene y ambientación.',
+    'Agenda revisada y servicios especiales identificados.',
+    'Presentismo y reemplazos organizados.',
+    'Puestos, herramientas e insumos necesarios preparados.',
+    'Equipo informado sobre situaciones importantes del día.',
+  ], openText: { id:'atencionEspecial', label:'¿Hay algo que requiera especial atención durante la jornada?' } },
+  { id:'jornada', title:'Durante la jornada', intro:'Durante el desarrollo de los servicios:', items:[
+    'Seguimiento de agenda, tiempos y flujo de clientes.',
+    'Seguimiento del trabajo y responsabilidades del equipo.',
+    'Procedimientos y condiciones de trabajo verificados.',
+    'Situaciones o dificultades detectadas y atendidas.',
+  ], openText: { id:'situacionesRelevantes', label:'Situaciones relevantes:' } },
+  { id:'clientesInsumos', title:'Clientes, incidencias e insumos', intro:'', items:[
+    'Situaciones de clientes atendidas cuando correspondía.',
+    'Reclamos, retoques o incidencias registrados.',
+    'Faltantes o problemas de insumos registrados.',
+    'Situaciones que requerían intervención de Dirección comunicadas.',
+  ] },
+  { id:'cierreSalon', title:'Cierre del salón', intro:'Antes de finalizar la jornada:', items:[
+    'Orden, limpieza y condiciones del salón verificadas.',
+    'Equipos e instalaciones revisados.',
+    'Stock o faltantes registrados cuando correspondía.',
+    'Información relevante comunicada a Dirección.',
+  ] },
+];
+const CHECKLIST_ENCARGADA_MOTIVOS = [
+  'Necesitaba autorización.',
+  'Era una situación que correspondía informar.',
+  'No tenía claro cómo resolverla.',
+  'Necesitaba apoyo para tomar la decisión.',
+];
+function emptyChecklistEncargadaChecks(){
+  const checks = {};
+  CHECKLIST_ENCARGADA_SECTIONS.forEach(s => { checks[s.id] = s.items.map(()=>false); });
+  checks.motivoConsulta = CHECKLIST_ENCARGADA_MOTIVOS.map(()=>false);
+  return checks;
+}
+function emptyChecklistEncargadaTexts(){
+  return {
+    atencionEspecial:'', situacionesRelevantes:'',
+    queOcurrio:'', queDecision:'', paraLaProxima:'',
+    incidenciaDetalle:'',
+    situacionResuelta:'', situacionPendiente:'', decisionPropia:'', consultaQuePodriaResolver:'',
+  };
+}
+const checklistEncargadaRepository = {
+  getAll: () => Object.values(DB.checklistEncargada),
+  getById: (id) => DB.checklistEncargada[id] || null,
+  getByStaffDate: (staffId, date) => Object.values(DB.checklistEncargada).find(r=>r.staffId===staffId && r.date===date) || null,
+  getByDate: (date) => Object.values(DB.checklistEncargada).filter(r=>r.date===date),
+  ensure: async (staffId, staffName, branch, date) => {
+    let record = checklistEncargadaRepository.getByStaffDate(staffId, date);
+    if(record) return record;
+    const id = uid();
+    DB.checklistEncargada[id] = { id, staffId, staffName, branch: branch||null, date,
+      checks: emptyChecklistEncargadaChecks(), texts: emptyChecklistEncargadaTexts(),
+      consultoDireccion:null, huboIncidencia:null, confirmado:false, confirmadoAt:null,
+      createdAt: nowIso(), updatedAt: nowIso() };
+    await sbUpsert('checklist_encargada', rowConverters.checklist_encargada.toRow(DB.checklistEncargada[id]));
+    return DB.checklistEncargada[id];
+  },
+  update: async (id, patch) => {
+    if(!DB.checklistEncargada[id]) return null;
+    Object.assign(DB.checklistEncargada[id], patch, { updatedAt: nowIso() });
+    await sbUpsert('checklist_encargada', rowConverters.checklist_encargada.toRow(DB.checklistEncargada[id]));
+    return DB.checklistEncargada[id];
+  },
+};
+function checklistEncargadaProgress(record){
+  const totalChecks = CHECKLIST_ENCARGADA_SECTIONS.reduce((s,sec)=>s+sec.items.length,0);
+  if(!record) return {done:0, total: totalChecks};
+  let done=0;
+  CHECKLIST_ENCARGADA_SECTIONS.forEach(sec => { (record.checks[sec.id]||[]).forEach(v=>{ if(v) done++; }); });
+  return {done, total: totalChecks};
 }
 
 const benefitRepository = {
@@ -1947,6 +2044,8 @@ const state = {
   turnosClientSearch: '',
   checklistDate: new Date().toISOString().slice(0,10),
   checklistTeamDate: new Date().toISOString().slice(0,10),
+  checklistEncargadaDate: new Date().toISOString().slice(0,10),
+  checklistEncargadaTeamDate: new Date().toISOString().slice(0,10),
   diagFormDraft: null,
   authLoading: false,
   diagSaving: false,
@@ -2152,6 +2251,10 @@ const STAFF_NAV = [
   {id:'beneficios', label:'Beneficios', icon:'gift', perm: PERMISSIONS.BENEFITS_MANAGE},
   {id:'cumpleanos', label:'Cumpleaños', icon:'star', perm: PERMISSIONS.CLIENTS_VIEW},
   {id:'checklist', label:'Checklist diario', icon:'check', perm: PERMISSIONS.DASHBOARD_VIEW},
+  // Este ítem no usa el sistema de permisos por PERMISSIONS: es exclusivo
+  // para OWNER (lo ve, en modo lectura) y ADMIN (lo completa) — por eso
+  // tiene "roles" en vez de "perm". Ver el filtro de nav más abajo.
+  {id:'checklistEncargada', label:'Checklist Encargada', icon:'activity', roles:[ROLES.OWNER, ROLES.ADMIN]},
   {id:'equipo', label:'Equipo y accesos', icon:'shield', perm: PERMISSIONS.TEAM_MANAGE},
   {id:'reportes', label:'Reportes', icon:'bar', perm: PERMISSIONS.REPORTS_VIEW},
   {id:'configuracion', label:'Configuración', icon:'settings', perm: [PERMISSIONS.SETTINGS_MANAGE, PERMISSIONS.DIAGNOSES_DELETE]},
@@ -2161,9 +2264,13 @@ const ROLE_LABELS = {OWNER:'Propietaria', ADMIN:'Administradora', RECEPCION:'Rec
 const STAFF_STATUS_LABELS = {invited:'Invitación pendiente', active:'Activa', suspended:'Suspendida', inactive:'Inactiva'};
 const STAFF_STATUS_BADGE = {invited:'badge-gray', active:'badge-green', suspended:'badge-red', inactive:'badge-gray'};
 
+function navItemAllowed(n, staff){
+  if(n.roles) return !!staff && n.roles.includes(staff.role);
+  return hasPermission(n.perm);
+}
 function renderStaffApp(){
   const staff = currentStaff();
-  const visibleNav = STAFF_NAV.filter(n => hasPermission(n.perm));
+  const visibleNav = STAFF_NAV.filter(n => navItemAllowed(n, staff));
   const nav = visibleNav.map(n => `
     <div class="nav-item ${state.staffView===n.id?'active':''}" data-action="setStaffView" data-view="${n.id}">
       ${Icon(n.icon)}<span>${n.label}</span>
@@ -2173,7 +2280,7 @@ function renderStaffApp(){
   // cualquier motivo staffView apunta a algo sin permiso, no se renderiza.
   const activeNavItem = STAFF_NAV.find(n=>n.id===state.staffView);
   let content = '';
-  if(activeNavItem && !hasPermission(activeNavItem.perm)){
+  if(activeNavItem && !navItemAllowed(activeNavItem, staff)){
     content = `<div class="glass empty-state">${Icon('shield')}<p>No tenés permisos para ver esta sección.</p></div>`;
   } else if(state.staffView==='dashboard') content = renderStaffDashboard();
   else if(state.staffView==='clientes') content = renderStaffClientes();
@@ -2182,6 +2289,7 @@ function renderStaffApp(){
   else if(state.staffView==='beneficios') content = renderStaffBeneficios();
   else if(state.staffView==='cumpleanos') content = renderStaffCumpleanos();
   else if(state.staffView==='checklist') content = hasPermission(PERMISSIONS.SETTINGS_MANAGE) ? renderChecklistTeamPanel(staffRepository.getAll()) : renderStaffChecklist();
+  else if(state.staffView==='checklistEncargada') content = staff.role===ROLES.ADMIN ? renderStaffChecklistEncargada() : renderChecklistEncargadaTeamPanel(staffRepository.getAll().filter(s=>s.role===ROLES.ADMIN));
   else if(state.staffView==='equipo') content = renderStaffEquipo();
   else if(state.staffView==='configuracion') content = renderStaffConfiguracion();
   else if(state.staffView==='reportes') content = renderStaffReportes();
@@ -2267,6 +2375,9 @@ function renderStaffApp(){
             ` : state.staffView==='checklist' ? `
               <h1 style="display:flex; align-items:center; gap:12px;"><span style="width:40px; height:40px; border-radius:14px; background:var(--pink-light); color:var(--pink-dark); display:inline-flex; align-items:center; justify-content:center;">${Icon('check')}</span> Checklist diario</h1>
               <p>${hasPermission(PERMISSIONS.SETTINGS_MANAGE) ? 'Quién completó el checklist de hoy en el equipo.' : 'Marcá cada punto a medida que lo vas cumpliendo en el día.'}</p>
+            ` : state.staffView==='checklistEncargada' ? `
+              <h1 style="display:flex; align-items:center; gap:12px;"><span style="width:40px; height:40px; border-radius:14px; background:var(--pink-light); color:var(--pink-dark); display:inline-flex; align-items:center; justify-content:center;">${Icon('activity')}</span> Checklist Encargada</h1>
+              <p>${staff.role===ROLES.ADMIN ? 'Completalo a lo largo del día — podés editarlo hasta que cierre la jornada.' : 'Lo que fueron cargando las administradoras hoy.'}</p>
             ` : `
               <h1>${activeNavItem ? activeNavItem.label : ''}</h1>
               <p>${new Date().toLocaleDateString('es-AR',{weekday:'long', day:'numeric', month:'long'})}</p>
@@ -3146,6 +3257,164 @@ function renderChecklistTeamPanel(staffList){
   </div>`;
 }
 
+/* ---- Checklist Encargada: lo completa la administradora ---- */
+function renderStaffChecklistEncargada(){
+  const staff = currentStaff();
+  const todayStr = new Date().toISOString().slice(0,10);
+  const date = state.checklistEncargadaDate || todayStr;
+  const isToday = date === todayStr;
+  const record = checklistEncargadaRepository.getByStaffDate(staff.id, date);
+  const checks = record ? record.checks : emptyChecklistEncargadaChecks();
+  const texts = record ? { ...emptyChecklistEncargadaTexts(), ...(record.texts||{}) } : emptyChecklistEncargadaTexts();
+  const consultoDireccion = record ? record.consultoDireccion : null;
+  const huboIncidencia = record ? record.huboIncidencia : null;
+  const confirmado = record ? !!record.confirmado : false;
+  const progress = checklistEncargadaProgress(record);
+  const complete = progress.total>0 && progress.done===progress.total;
+
+  const dateObj = new Date(date+'T00:00:00');
+  const dayLabel = dateObj.toLocaleDateString('es-AR', {weekday:'long', day:'numeric', month:'long'});
+  const ro = isToday ? '' : 'disabled';
+
+  const textField = (id, label) => `
+    <div style="margin-top:14px;">
+      <label class="field-label">${label}</label>
+      <textarea class="input checklist-encargada-text" id="cke_${id}" data-field="${id}" rows="2" ${ro} placeholder="Escribí acá..." style="resize:vertical;">${texts[id]||''}</textarea>
+    </div>`;
+
+  const checkboxGroup = (sectionId, items, values) => items.map((text, idx) => {
+    const isChecked = !!(values && values[idx]);
+    return `
+    <div class="checklist-item ${isChecked?'checked':''} ${isToday?'':'readonly'}" ${isToday ? `data-action="toggleChecklistEncargadaItem" data-group="${sectionId}" data-idx="${idx}"` : ''}>
+      <div class="checklist-checkbox">${Icon('check')}</div>
+      <div class="checklist-item-text">${text}</div>
+    </div>`;
+  }).join('');
+
+  return `
+  <div class="turnos-hero-card">
+    <div class="turnos-toolbar">
+      <div class="date-nav">
+        <button class="date-nav-btn" data-action="checklistEncargadaShiftDate" data-days="-1">${Icon('arrowleft')}</button>
+        <div class="date-nav-label">${dayLabel}</div>
+        <button class="date-nav-btn" data-action="checklistEncargadaShiftDate" data-days="1" ${date>=todayStr?'style="opacity:0.35; pointer-events:none;"':''}>${Icon('chevron')}</button>
+      </div>
+      <span class="checklist-progress-badge ${complete?'complete':''}">${progress.done}/${progress.total} completado${progress.done===1?'':'s'}</span>
+    </div>
+    ${!isToday ? `<p style="color:var(--text-secondary); font-size:13px; margin:-10px 0 20px;">Estás viendo un día pasado — queda como registro, no se puede editar.</p>` : ''}
+
+    <div class="turnos-list-scroll">
+
+      <div class="checklist-section">
+        <div class="checklist-section-head"><div class="checklist-section-title">${CHECKLIST_ENCARGADA_SECTIONS[0].title}</div></div>
+        <p class="checklist-section-intro">${CHECKLIST_ENCARGADA_SECTIONS[0].intro}</p>
+        ${checkboxGroup('apertura', CHECKLIST_ENCARGADA_SECTIONS[0].items, checks.apertura)}
+        ${textField('atencionEspecial', CHECKLIST_ENCARGADA_SECTIONS[0].openText.label)}
+      </div>
+
+      <div class="checklist-section">
+        <div class="checklist-section-head"><div class="checklist-section-title">${CHECKLIST_ENCARGADA_SECTIONS[1].title}</div></div>
+        <p class="checklist-section-intro">${CHECKLIST_ENCARGADA_SECTIONS[1].intro}</p>
+        ${checkboxGroup('jornada', CHECKLIST_ENCARGADA_SECTIONS[1].items, checks.jornada)}
+        ${textField('situacionesRelevantes', CHECKLIST_ENCARGADA_SECTIONS[1].openText.label)}
+      </div>
+
+      <div class="checklist-section">
+        <div class="checklist-section-head"><div class="checklist-section-title">Decisiones y situaciones</div></div>
+        ${textField('queOcurrio', '¿Qué ocurrió?')}
+        ${textField('queDecision', '¿Qué decisión tomé?')}
+        <div style="margin-top:16px;">
+          <label class="field-label">¿Consulté a Dirección?</label>
+          <div style="display:flex; gap:10px; margin-top:6px;">
+            <button class="chip-filter ${consultoDireccion===true?'active':''}" ${isToday?`data-action="setChecklistEncargadaConsulto" data-value="true"`:'disabled'}>Sí</button>
+            <button class="chip-filter ${consultoDireccion===false?'active':''}" ${isToday?`data-action="setChecklistEncargadaConsulto" data-value="false"`:'disabled'}>No</button>
+          </div>
+        </div>
+        ${consultoDireccion===true ? `
+        <div style="margin-top:14px;">
+          <label class="field-label">Si consulté, ¿por qué?</label>
+          ${checkboxGroup('motivoConsulta', CHECKLIST_ENCARGADA_MOTIVOS, checks.motivoConsulta)}
+        </div>` : ''}
+        ${textField('paraLaProxima', 'Para la próxima, ¿qué tengo que tener en cuenta?')}
+      </div>
+
+      <div class="checklist-section">
+        <div class="checklist-section-head"><div class="checklist-section-title">${CHECKLIST_ENCARGADA_SECTIONS[2].title}</div></div>
+        ${checkboxGroup('clientesInsumos', CHECKLIST_ENCARGADA_SECTIONS[2].items, checks.clientesInsumos)}
+        <div style="margin-top:16px;">
+          <label class="field-label">¿Hubo alguna incidencia que requiera seguimiento?</label>
+          <div style="display:flex; gap:10px; margin-top:6px;">
+            <button class="chip-filter ${huboIncidencia===true?'active':''}" ${isToday?`data-action="setChecklistEncargadaIncidencia" data-value="true"`:'disabled'}>Sí</button>
+            <button class="chip-filter ${huboIncidencia===false?'active':''}" ${isToday?`data-action="setChecklistEncargadaIncidencia" data-value="false"`:'disabled'}>No</button>
+          </div>
+        </div>
+        ${huboIncidencia===true ? textField('incidenciaDetalle', '¿Cuál?') : ''}
+      </div>
+
+      <div class="checklist-section">
+        <div class="checklist-section-head"><div class="checklist-section-title">${CHECKLIST_ENCARGADA_SECTIONS[3].title}</div></div>
+        <p class="checklist-section-intro">${CHECKLIST_ENCARGADA_SECTIONS[3].intro}</p>
+        ${checkboxGroup('cierreSalon', CHECKLIST_ENCARGADA_SECTIONS[3].items, checks.cierreSalon)}
+      </div>
+
+      <div class="checklist-section">
+        <div class="checklist-section-head"><div class="checklist-section-title">Cierre de mi jornada como encargada</div></div>
+        ${textField('situacionResuelta', '¿Qué situación importante resolví hoy?')}
+        ${textField('situacionPendiente', '¿Qué situación quedó pendiente?')}
+        ${textField('decisionPropia', '¿Qué decisión tomé sin necesidad de recurrir a Dirección?')}
+        ${textField('consultaQuePodriaResolver', '¿Hay algo que hoy consulté a la Dirección que considero que podría resolver por mí misma en una próxima oportunidad?')}
+      </div>
+
+      <div class="checklist-section">
+        ${isToday ? `<button class="btn btn-secondary btn-sm" data-action="saveChecklistEncargadaTexts">Guardar respuestas</button>` : ''}
+        <div class="checklist-item ${confirmado?'checked':''} ${isToday?'':'readonly'}" ${isToday ? `data-action="toggleChecklistEncargadaConfirm"` : ''} style="margin-top:16px;">
+          <div class="checklist-checkbox">${Icon('check')}</div>
+          <div class="checklist-item-text">Confirmo que completé este checklist — ${staff.name}</div>
+        </div>
+      </div>
+
+    </div>
+  </div>`;
+}
+
+/* ---- Checklist Encargada: lo ve Yeni (Owner), en modo lectura ---- */
+function renderChecklistEncargadaTeamPanel(adminList){
+  const date = state.checklistEncargadaTeamDate;
+  const dateObj = new Date(date+'T00:00:00');
+  const dayLabel = dateObj.toLocaleDateString('es-AR', {weekday:'long', day:'numeric', month:'long'});
+  const activeAdmins = adminList.filter(s=>s.status==='active');
+  const records = checklistEncargadaRepository.getByDate(date);
+  const byStaffId = {};
+  records.forEach(r=> byStaffId[r.staffId]=r);
+
+  return `
+  <div class="glass panel" style="margin-bottom:32px; padding:28px 30px;">
+    <div class="panel-head" style="margin-bottom:16px; flex-wrap:wrap; gap:12px;">
+      <div class="panel-title" style="display:flex; align-items:center; gap:9px; font-size:18px;">${Icon('activity')} Checklist Encargada del equipo</div>
+      <div class="date-nav">
+        <button class="date-nav-btn" data-action="checklistEncargadaTeamShiftDate" data-days="-1">${Icon('arrowleft')}</button>
+        <div class="date-nav-label" style="min-width:180px; font-size:14px;">${dayLabel}</div>
+        <button class="date-nav-btn" data-action="checklistEncargadaTeamShiftDate" data-days="1">${Icon('chevron')}</button>
+      </div>
+    </div>
+    ${activeAdmins.length ? activeAdmins.map(s => {
+      const record = byStaffId[s.id];
+      const progress = checklistEncargadaProgress(record);
+      const complete = progress.total>0 && progress.done===progress.total;
+      const started = record && (progress.done>0 || record.confirmado);
+      return `
+      <div class="catalog-row" style="align-items:flex-start; cursor:pointer;" data-action="openModal" data-modal="viewEncargadaChecklist" data-staffid="${s.id}" data-date="${date}">
+        <div class="avatar">${initials(s.name)}</div>
+        <div class="catalog-row-name" style="display:flex; flex-direction:column; gap:4px;">
+          <span>${s.name}</span>
+          ${record && record.confirmado ? `<span style="font-size:12.5px; color:#059669; font-weight:600;">Confirmado</span>` : ''}
+        </div>
+        <span class="checklist-progress-badge ${complete?'complete':''}">${(started||complete) ? `${progress.done}/${progress.total}` : 'Sin empezar'}</span>
+      </div>`;
+    }).join('') : `<p style="color:var(--text-secondary); font-size:14px;">No hay administradoras activas para mostrar.</p>`}
+  </div>`;
+}
+
 function renderStaffEquipo(){
   const staffList = staffRepository.getAll().sort((a,b)=> (a.name||'').localeCompare(b.name||''));
   const recent = auditRepository.getRecent(10);
@@ -3674,6 +3943,7 @@ function renderModal(){
   else if(m.type==='confirmDeleteTreatmentCatalogItem') inner = modalConfirmDeleteTreatmentCatalogItem(m);
   else if(m.type==='confirmDeleteClient') inner = modalConfirmDeleteClient(m);
   else if(m.type==='viewStaffChecklist') inner = modalViewStaffChecklist(m);
+  else if(m.type==='viewEncargadaChecklist') inner = modalViewEncargadaChecklist(m);
   else if(m.type==='newExpense') inner = modalNewExpense(m);
   else if(m.type==='newBanner') inner = modalNewBanner(m);
   else if(m.type==='renameBranch') inner = modalRenameBranch(m);
@@ -4567,6 +4837,77 @@ function modalViewStaffChecklist(m){
   `;
 }
 
+function modalViewEncargadaChecklist(m){
+  const staff = staffRepository.getById(m.payload.staffid);
+  const date = m.payload.date;
+  if(!staff) return `<p>Empleada no encontrada.</p>`;
+  const record = checklistEncargadaRepository.getByStaffDate(staff.id, date);
+  const checks = record ? record.checks : emptyChecklistEncargadaChecks();
+  const texts = record ? { ...emptyChecklistEncargadaTexts(), ...(record.texts||{}) } : emptyChecklistEncargadaTexts();
+  const consultoDireccion = record ? record.consultoDireccion : null;
+  const huboIncidencia = record ? record.huboIncidencia : null;
+  const confirmado = record ? !!record.confirmado : false;
+  const progress = checklistEncargadaProgress(record);
+  const dateObj = new Date(date+'T00:00:00');
+  const dayLabel = dateObj.toLocaleDateString('es-AR', {weekday:'long', day:'numeric', month:'long'});
+
+  const roCheckbox = (isChecked, text) => `
+    <div class="checklist-item readonly ${isChecked?'checked':''}" style="cursor:default;">
+      <div class="checklist-checkbox">${Icon('check')}</div>
+      <div class="checklist-item-text">${text}</div>
+    </div>`;
+  const roText = (id, label) => texts[id] ? `
+    <div style="margin-top:12px;">
+      <div style="font-size:12.5px; font-weight:700; color:var(--text-secondary);">${label}</div>
+      <p style="font-size:13.5px; margin:4px 0 0;">${texts[id]}</p>
+    </div>` : '';
+
+  return `
+  <div class="modal-head"><h2>${staff.name}</h2><button class="close-btn" data-action="closeModal">${Icon('x')}</button></div>
+  <p style="color:var(--text-secondary); font-size:13px; margin:-10px 0 16px;">${dayLabel} · ${progress.done}/${progress.total} tildes${confirmado ? ' · <span style="color:#059669; font-weight:700;">Confirmado</span>' : ''}</p>
+
+  <div class="turnos-list-scroll" style="max-height:60vh;">
+    ${!record ? `<div class="empty-state">${Icon('activity')}<p>Todavía no empezó a completarlo ese día.</p></div>` : `
+    <div class="checklist-section">
+      <div class="checklist-section-title" style="font-size:14px;">${CHECKLIST_ENCARGADA_SECTIONS[0].title}</div>
+      ${CHECKLIST_ENCARGADA_SECTIONS[0].items.map((t,i)=>roCheckbox(!!checks.apertura[i], t)).join('')}
+      ${roText('atencionEspecial', CHECKLIST_ENCARGADA_SECTIONS[0].openText.label)}
+    </div>
+    <div class="checklist-section">
+      <div class="checklist-section-title" style="font-size:14px;">${CHECKLIST_ENCARGADA_SECTIONS[1].title}</div>
+      ${CHECKLIST_ENCARGADA_SECTIONS[1].items.map((t,i)=>roCheckbox(!!checks.jornada[i], t)).join('')}
+      ${roText('situacionesRelevantes', CHECKLIST_ENCARGADA_SECTIONS[1].openText.label)}
+    </div>
+    <div class="checklist-section">
+      <div class="checklist-section-title" style="font-size:14px;">Decisiones y situaciones</div>
+      ${roText('queOcurrio', '¿Qué ocurrió?')}
+      ${roText('queDecision', '¿Qué decisión tomé?')}
+      <div style="margin-top:12px; font-size:13.5px;"><b>¿Consultó a Dirección?</b> ${consultoDireccion===true?'Sí':(consultoDireccion===false?'No':'—')}</div>
+      ${consultoDireccion===true ? CHECKLIST_ENCARGADA_MOTIVOS.map((t,i)=>roCheckbox(!!checks.motivoConsulta[i], t)).join('') : ''}
+      ${roText('paraLaProxima', 'Para la próxima, ¿qué tiene que tener en cuenta?')}
+    </div>
+    <div class="checklist-section">
+      <div class="checklist-section-title" style="font-size:14px;">${CHECKLIST_ENCARGADA_SECTIONS[2].title}</div>
+      ${CHECKLIST_ENCARGADA_SECTIONS[2].items.map((t,i)=>roCheckbox(!!checks.clientesInsumos[i], t)).join('')}
+      <div style="margin-top:12px; font-size:13.5px;"><b>¿Hubo incidencia?</b> ${huboIncidencia===true?'Sí':(huboIncidencia===false?'No':'—')}</div>
+      ${huboIncidencia===true ? roText('incidenciaDetalle', '¿Cuál?') : ''}
+    </div>
+    <div class="checklist-section">
+      <div class="checklist-section-title" style="font-size:14px;">${CHECKLIST_ENCARGADA_SECTIONS[3].title}</div>
+      ${CHECKLIST_ENCARGADA_SECTIONS[3].items.map((t,i)=>roCheckbox(!!checks.cierreSalon[i], t)).join('')}
+    </div>
+    <div class="checklist-section">
+      <div class="checklist-section-title" style="font-size:14px;">Cierre de la jornada como encargada</div>
+      ${roText('situacionResuelta', '¿Qué situación importante resolvió hoy?')}
+      ${roText('situacionPendiente', '¿Qué situación quedó pendiente?')}
+      ${roText('decisionPropia', '¿Qué decisión tomó sin necesidad de recurrir a Dirección?')}
+      ${roText('consultaQuePodriaResolver', '¿Hay algo que hoy consultó y considera que podría resolver por sí misma la próxima vez?')}
+    </div>
+    `}
+  </div>
+  `;
+}
+
 function modalConfirmDeleteClient(m){
   const c = clientRepository.getById(m.payload.id);
   if(!c) return `<p>Clienta no encontrada.</p>`;
@@ -5434,6 +5775,23 @@ function handleAction(action, el){
     const d = new Date(state.checklistTeamDate+'T00:00:00'); d.setDate(d.getDate()+days);
     setState({checklistTeamDate: d.toISOString().slice(0,10)});
   }
+  else if(action==='checklistEncargadaShiftDate'){
+    const days = parseInt(el.getAttribute('data-days'),10);
+    const d = new Date(state.checklistEncargadaDate+'T00:00:00'); d.setDate(d.getDate()+days);
+    const next = d.toISOString().slice(0,10);
+    const todayStr = new Date().toISOString().slice(0,10);
+    setState({checklistEncargadaDate: next > todayStr ? todayStr : next});
+  }
+  else if(action==='checklistEncargadaTeamShiftDate'){
+    const days = parseInt(el.getAttribute('data-days'),10);
+    const d = new Date(state.checklistEncargadaTeamDate+'T00:00:00'); d.setDate(d.getDate()+days);
+    setState({checklistEncargadaTeamDate: d.toISOString().slice(0,10)});
+  }
+  else if(action==='toggleChecklistEncargadaItem'){ doToggleChecklistEncargadaItem(el.getAttribute('data-group'), parseInt(el.getAttribute('data-idx'),10)); }
+  else if(action==='setChecklistEncargadaConsulto'){ doSetChecklistEncargadaField('consultoDireccion', el.getAttribute('data-value')==='true'); }
+  else if(action==='setChecklistEncargadaIncidencia'){ doSetChecklistEncargadaField('huboIncidencia', el.getAttribute('data-value')==='true'); }
+  else if(action==='saveChecklistEncargadaTexts'){ doSaveChecklistEncargadaTexts(); }
+  else if(action==='toggleChecklistEncargadaConfirm'){ doToggleChecklistEncargadaConfirm(); }
   else if(action==='saveSalonInfo'){ doSaveSalonInfo(); }
   else if(action==='saveHours'){ doSaveHours(); }
   else if(action==='addBranch'){ doAddBranch(); }
@@ -6447,6 +6805,72 @@ async function doSaveChecklistReflexion(){
   const text = document.getElementById('checklist_reflexion').value;
   await checklistRepository.update(record.id, { reflexion: text });
   showToast('Reflexión guardada');
+}
+
+function checklistEncargadaEditableGuard(){
+  const staff = currentStaff();
+  if(!staff || staff.role !== ROLES.ADMIN) return null;
+  const todayStr = new Date().toISOString().slice(0,10);
+  if(state.checklistEncargadaDate !== todayStr) return null; // solo se edita el día de hoy
+  return staff;
+}
+
+// Antes de cualquier acción que dispare un render() (tildar, elegir Sí/No,
+// confirmar), guardamos lo que la administradora ya tenía tipeado en las
+// preguntas abiertas — si no, el re-render las pisa con lo último guardado
+// en la base y se pierde texto sin guardar (mismo bug que tuvimos antes
+// con el formulario de diagnóstico).
+function captureChecklistEncargadaTextsFromDOM(baseTexts){
+  const texts = { ...emptyChecklistEncargadaTexts(), ...(baseTexts||{}) };
+  document.querySelectorAll('.checklist-encargada-text').forEach(elx => {
+    const field = elx.getAttribute('data-field');
+    if(field) texts[field] = elx.value;
+  });
+  return texts;
+}
+
+async function doToggleChecklistEncargadaItem(groupId, idx){
+  const staff = checklistEncargadaEditableGuard();
+  if(!staff) return;
+  const todayStr = new Date().toISOString().slice(0,10);
+  const record = await checklistEncargadaRepository.ensure(staff.id, staff.name, staff.branch, todayStr);
+  const checks = { ...record.checks };
+  checks[groupId] = [...(checks[groupId]||[])];
+  checks[groupId][idx] = !checks[groupId][idx];
+  const texts = captureChecklistEncargadaTextsFromDOM(record.texts);
+  await checklistEncargadaRepository.update(record.id, { checks, texts });
+  render();
+}
+
+async function doSetChecklistEncargadaField(field, value){
+  const staff = checklistEncargadaEditableGuard();
+  if(!staff) return;
+  const todayStr = new Date().toISOString().slice(0,10);
+  const record = await checklistEncargadaRepository.ensure(staff.id, staff.name, staff.branch, todayStr);
+  const texts = captureChecklistEncargadaTextsFromDOM(record.texts);
+  await checklistEncargadaRepository.update(record.id, { [field]: value, texts });
+  render();
+}
+
+async function doSaveChecklistEncargadaTexts(){
+  const staff = checklistEncargadaEditableGuard();
+  if(!staff) return;
+  const todayStr = new Date().toISOString().slice(0,10);
+  const record = await checklistEncargadaRepository.ensure(staff.id, staff.name, staff.branch, todayStr);
+  const texts = captureChecklistEncargadaTextsFromDOM(record.texts);
+  await checklistEncargadaRepository.update(record.id, { texts });
+  showToast('Respuestas guardadas');
+}
+
+async function doToggleChecklistEncargadaConfirm(){
+  const staff = checklistEncargadaEditableGuard();
+  if(!staff) return;
+  const todayStr = new Date().toISOString().slice(0,10);
+  const record = await checklistEncargadaRepository.ensure(staff.id, staff.name, staff.branch, todayStr);
+  const nextConfirmado = !record.confirmado;
+  const texts = captureChecklistEncargadaTextsFromDOM(record.texts);
+  await checklistEncargadaRepository.update(record.id, { confirmado: nextConfirmado, confirmadoAt: nextConfirmado ? nowIso() : null, texts });
+  render();
 }
 
 async function doGiftBirthday(id){
