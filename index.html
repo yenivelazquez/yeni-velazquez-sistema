@@ -2138,8 +2138,12 @@ function screenAnim(){ return _isNewScreen ? 'fade-in' : ''; }
    (2 pasos: teléfono → crear o ingresar contraseña)
    ========================================================= */
 function renderPortalLogin(){
-  const step = state.clientLoginStep;
   const client = state.clientLoginPendingId ? clientRepository.getById(state.clientLoginPendingId) : null;
+  // Si Yeni restableció la contraseña mientras la clienta ya estaba parada en
+  // la pantalla de "ingresar contraseña", pasamos solos a "crear contraseña
+  // nueva" en vez de dejarla trabada con una contraseña que ya no existe.
+  let step = state.clientLoginStep;
+  if(step === 'enterPassword' && client && !client.passwordSet){ step = 'setPassword'; state.clientLoginStep = 'setPassword'; state.errors = {}; }
 
   let body = '';
   if(step === 'phone'){
@@ -5641,6 +5645,7 @@ function handleAction(action, el){
   else if(action==='submitEnterPassword'){
     const p = document.getElementById('enterPasswordInput').value;
     const c = clientRepository.getById(state.clientLoginPendingId);
+    if(c && !c.passwordSet){ state.errors = {}; setState({clientLoginStep:'setPassword'}); return; }
     if(c && c.password === p){
       state.errors={};
       persistSession('client', c.id);
