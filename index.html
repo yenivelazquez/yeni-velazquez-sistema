@@ -6085,7 +6085,25 @@ async function doCreateClient(){
   const phone = normalizePhone(phoneRaw);
 
   if(!firstName || !phone){ state.errors.createClient = 'Completá al menos el nombre y el teléfono.'; render(); return; }
-  if(clientRepository.getByPhone(phone)){ state.errors.createClient = 'Ya existe una clienta con ese teléfono.'; render(); return; }
+  const existing = clientRepository.getByPhone(phone);
+  if(existing && existing.archived){
+    // Había sido eliminada antes (la eliminación solo la oculta): la
+    // recuperamos con su historial en vez de bloquear el alta.
+    if(state.creatingClient) return;
+    state.creatingClient = true; render();
+    try{
+      await clientRepository.update(existing.id, { archived:false, archivedAt:null, name: name || existing.name,
+        sucursal: sucursal || existing.sucursal, birthdate: birthdate || existing.birthdate });
+      await auditRepository.log('client.restore', {entity:'clients', entityId:existing.id, description:`Clienta restaurada: ${existing.name}`, branch:existing.sucursal});
+    }catch(e){ state.creatingClient = false; render(); return; }
+    state.creatingClient = false;
+    state.errors.createClient = null;
+    state.modal = null;
+    render();
+    showToast(`${existing.name} ya estaba registrada (eliminada antes). Se recuperó con su historial.`);
+    return;
+  }
+  if(existing){ state.errors.createClient = `Ya existe una clienta con ese teléfono: ${existing.name}${existing.sucursal?' ('+existing.sucursal+')':''}. Puede estar en otra sucursal: elegí "Todas las sucursales" arriba para verla.`; render(); return; }
   let rc = null;
   if(refInput){
     rc = referralRepository.getByCode(refInput);
