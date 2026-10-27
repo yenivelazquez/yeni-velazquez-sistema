@@ -2624,7 +2624,11 @@ function renderStaffClientes(){
   ];
 
   let clients = [...allClients].sort((a,b)=> new Date(b.createdAt)-new Date(a.createdAt));
-  const f = state.clientesFilter;
+  // Si se está buscando por nombre/teléfono/código, el filtro de arriba
+  // (Recurrentes, En riesgo...) no se aplica: antes dejaba "sin resultados"
+  // a clientas que sí existían pero no entraban en ese filtro.
+  const searching = !!(state.clientSearch||'').trim();
+  const f = searching ? 'todas' : state.clientesFilter;
   if(f==='primera') clients = clients.filter(c=>(c.treatments||[]).length===1);
   else if(f==='recurrentes') clients = clients.filter(c=>(c.treatments||[]).length>1);
   else if(f==='riesgo') clients = clients.filter(c=>{ const lt=lastTreatment(c); return lt && daysSince(lt.date)>55; });
