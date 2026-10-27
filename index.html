@@ -2083,6 +2083,10 @@ let _lastScreenKey = null;
 let _isNewScreen = true;
 
 function render(){
+  // Si el formulario de diagnóstico está abierto, guardamos lo que ya se
+  // escribió ANTES de redibujar — así ningún redibujado (terminar de subir
+  // una foto, un aviso, el propio botón Guardar) lo puede vaciar.
+  if(state.modal && state.modal.type==='newDiagnosis'){ captureDiagFormDraft(); }
   resolveRoute();
   const scrollY = window.scrollY;
   // Los contenedores con scroll propio (listas largas dentro de una card) también
